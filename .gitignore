@@ -1,0 +1,14 @@
+node_modules/
+dist/
+data/
+*.local
+.DS_Store
+web/public/font/
+web/public/soundfont/
+web/public/sounds/
+
+# Kept locally only: the version control holds the app (web/, server/) and the config files.
+CLAUDE.md
+docs/
+scripts/
+test/
