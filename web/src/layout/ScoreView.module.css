@@ -1,0 +1,61 @@
+/* The only scrollable region of the page. */
+.scoreView {
+  position: relative;
+  overflow-x: hidden;
+  overflow-y: auto;
+  min-height: 0;
+  background: var(--score-bg);
+  color: var(--score-text);
+}
+
+.sheet {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 8px 16px 48px;
+}
+
+.home {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 32px 24px;
+}
+
+.home h1 {
+  margin: 0 0 16px;
+  font-size: 22px;
+}
+
+.status,
+.error {
+  margin: 20vh 0 0;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.home .error {
+  margin: 0 0 12px;
+  text-align: left;
+}
+
+.error {
+  color: var(--danger);
+}
+
+/* alphaTab cursor and selection (class names are alphaTab's). */
+.scoreView :global(.at-cursor-bar) {
+  background: rgb(10 132 255 / 12%);
+}
+
+.scoreView :global(.at-cursor-beat) {
+  width: 3px;
+  background: var(--accent);
+}
+
+.scoreView :global(.at-selection div) {
+  background: rgb(10 132 255 / 18%);
+}
+
+.scoreView :global(.at-highlight *) {
+  fill: var(--accent);
+  stroke: var(--accent);
+}
