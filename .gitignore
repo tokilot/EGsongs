@@ -10,5 +10,3 @@ web/public/sounds/
 # Kept locally only: the version control holds the app (web/, server/) and the config files.
 CLAUDE.md
 docs/
-scripts/
-test/

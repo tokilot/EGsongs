@@ -1,4 +1,6 @@
 // Thin wrappers around the local API (server/src/app.ts).
+import type { TrackEdits } from '../player/trackEdits.ts'
+import { translate } from '../ui/i18n.ts'
 
 /** Per-song practice state, restored the next time the song is opened. */
 export interface PracticeSettings {
@@ -9,6 +11,8 @@ export interface PracticeSettings {
   countIn?: boolean
   metronome?: boolean
   transpose?: number
+  /** Track name, instrument, tuning and capo changes, keyed by track index. */
+  trackEdits?: TrackEdits
 }
 
 export interface Song {
@@ -24,6 +28,8 @@ export interface Song {
   trackCount: number
   defaultTrack: number
   favorite: boolean
+  /** Changed in the tab editor: open the edited copy instead of the source. */
+  edited: boolean
   settings: PracticeSettings
   createdAt: string
   lastOpenedAt: string | null
@@ -48,11 +54,11 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   try {
     response = await fetch(url, init)
   } catch {
-    throw new Error('无法连接本地服务，请确认后端已启动。')
+    throw new Error(translate('无法连接本地服务，请确认后端已启动。'))
   }
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as { error?: string } | null
-    throw new Error(body?.error ?? `请求失败（${response.status}）`)
+    throw new Error(body?.error ?? translate('请求失败（{status}）', { status: response.status }))
   }
   return (await response.json()) as T
 }
@@ -91,8 +97,22 @@ export function deleteSong(id: number): Promise<{ ok: boolean }> {
 
 export async function getSongFile(id: number): Promise<Uint8Array> {
   const response = await fetch(`/api/songs/${id}/file`)
-  if (!response.ok) throw new Error('读取曲谱文件失败。')
+  if (!response.ok) throw new Error(translate('读取曲谱文件失败。'))
   return new Uint8Array(await response.arrayBuffer())
+}
+
+export async function getEditedSong(id: number): Promise<Uint8Array> {
+  const response = await fetch(`/api/songs/${id}/edited`)
+  if (!response.ok) throw new Error(translate('读取曲谱文件失败。'))
+  return new Uint8Array(await response.arrayBuffer())
+}
+
+export function saveEditedSong(id: number, bytes: Uint8Array): Promise<Song> {
+  return request(`/api/songs/${id}/edited`, { method: 'PUT', body: bytes as unknown as BodyInit })
+}
+
+export function discardEditedSong(id: number): Promise<Song> {
+  return request(`/api/songs/${id}/edited`, { method: 'DELETE' })
 }
 
 export async function getSongTracks(id: number): Promise<unknown[]> {

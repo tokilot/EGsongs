@@ -2,6 +2,7 @@ import { Star, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import * as api from '../api/client.ts'
 import type { Song } from '../api/client.ts'
+import { translate, useLanguage } from '../ui/i18n.ts'
 import { useSong } from './useSong.ts'
 import styles from './SongList.module.css'
 
@@ -12,6 +13,7 @@ interface SongListProps {
 
 /** "My tabs": everything in the library, most recently practised first, with a favourites filter. */
 export function SongList({ onPick }: SongListProps) {
+  const { t } = useLanguage()
   const { song: current, open, close, replace, libraryVersion, libraryChanged } = useSong()
   const [songs, setSongs] = useState<Song[] | null>(null)
   const [favoritesOnly, setFavoritesOnly] = useState(false)
@@ -41,7 +43,7 @@ export function SongList({ onPick }: SongListProps) {
   }
 
   const remove = async (song: Song) => {
-    if (!window.confirm(`从曲库删除「${song.title}」？`)) return
+    if (!window.confirm(translate('从曲库删除「{title}」？', { title: song.title }))) return
     await api.deleteSong(song.id)
     if (current?.id === song.id) close()
     libraryChanged()
@@ -49,18 +51,18 @@ export function SongList({ onPick }: SongListProps) {
 
   return (
     <div className={styles.list}>
-      <div className={styles.filters} role="tablist" aria-label="筛选">
+      <div className={styles.filters} role="tablist" aria-label={t('筛选')}>
         <button type="button" role="tab" aria-selected={!favoritesOnly} onClick={() => setFavoritesOnly(false)}>
-          全部
+          {t('全部')}
         </button>
         <button type="button" role="tab" aria-selected={favoritesOnly} onClick={() => setFavoritesOnly(true)}>
-          收藏
+          {t('收藏')}
         </button>
       </div>
 
       {error && <p className={styles.message}>{error}</p>}
       {!error && songs?.length === 0 && (
-        <p className={styles.message}>{favoritesOnly ? '还没有收藏的曲谱。' : '曲库是空的。在顶栏搜索，或点击“新建”导入曲谱。'}</p>
+        <p className={styles.message}>{favoritesOnly ? t('还没有收藏的曲谱。') : t('曲库是空的。在顶栏搜索，或点击“新建”导入曲谱。')}</p>
       )}
 
       <ul>
@@ -76,20 +78,20 @@ export function SongList({ onPick }: SongListProps) {
             >
               <span className={styles.title}>{song.title}</span>
               <span className={styles.artist}>
-                {song.source === 'file' ? [song.artist, '本地文件'].filter(Boolean).join(' · ') : song.artist}
+                {song.source === 'file' ? [song.artist, t('本地文件')].filter(Boolean).join(' · ') : song.artist}
               </span>
             </button>
             <button
               type="button"
               className={styles.icon}
-              aria-label={song.favorite ? '取消收藏' : '收藏'}
+              aria-label={song.favorite ? t('取消收藏') : t('收藏')}
               aria-pressed={song.favorite}
-              title={song.favorite ? '取消收藏' : '收藏'}
+              title={song.favorite ? t('取消收藏') : t('收藏')}
               onClick={() => void toggleFavorite(song)}
             >
               <Star size={16} aria-hidden fill={song.favorite ? 'currentColor' : 'none'} />
             </button>
-            <button type="button" className={styles.icon} aria-label="删除" title="删除" onClick={() => void remove(song)}>
+            <button type="button" className={styles.icon} aria-label={t('删除')} title={t('删除')} onClick={() => void remove(song)}>
               <Trash2 size={16} aria-hidden />
             </button>
           </li>

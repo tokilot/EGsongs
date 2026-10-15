@@ -14,6 +14,58 @@ interface Patch {
 
 const PATCHES: Patch[] = [
   {
+    // Lyrics go under the tab, as on Songsterr, instead of in the band over it with the other text.
+    why: 'lyrics under the tab',
+    find: `		new TabBarRendererFactory([
+			{
+				effect: new LyricsEffectInfo(),
+				mode: EffectBandMode.SharedTop
+			},`,
+    replace: `		new TabBarRendererFactory([
+			{
+				effect: new LyricsEffectInfo(),
+				mode: EffectBandMode.OwnedBottom
+			},`,
+  },
+  {
+    // The layout is made in a worker from a copy of the score, and its result points at beats and notes by
+    // index. While the tab editor changes the score quickly (type, insert, undo…) a result can come back
+    // for a score that has changed since; then some of those indexes no longer exist. Skip them: the result
+    // of the latest edit follows right after and is complete.
+    why: 'positions of beats that an edit has since removed',
+    find: `						bb.beat = score.tracks[beat.get("trackIndex")].staves[beat.get("staffIndex")].bars[beat.get("barIndex")].voices[beat.get("voiceIndex")].beats[beat.get("beatIndex")];`,
+    replace: `						bb.beat = score.tracks[beat.get("trackIndex")]?.staves[beat.get("staffIndex")]?.bars[beat.get("barIndex")]?.voices[beat.get("voiceIndex")]?.beats[beat.get("beatIndex")];
+						if (!bb.beat) continue;`,
+  },
+  {
+    why: 'positions of notes that an edit has since removed',
+    find: `								n.note = bb.beat.notes[note.get("index")];`,
+    replace: `								n.note = bb.beat.notes[note.get("index")];
+								if (!n.note) continue;`,
+  },
+  {
+    // play() only starts the audio source once the audio worklet has been created, which is asynchronous. A
+    // pause() in between (play and pause in quick succession, or loading another score right after pressing
+    // play) calls stop() on a source that was never started; that throws, and the error surfaces from
+    // api.pause() / api.stop() in the middle of whatever was going on.
+    why: 'pausing before the audio source has started',
+    find: `			this.source.stop(0);
+			this.source.disconnect();`,
+    replace: `			try {
+				this.source.stop(0);
+			} catch (e) {}
+			this.source.disconnect();`,
+  },
+  {
+    // The other half of the same race: the worklet arrives after the pause and finds no source to connect.
+    why: 'audio worklet ready after playback was paused',
+    find: `		BrowserUiFacade.createAlphaSynthAudioWorklet(ctx, this._settings).then(() => {
+			this._worklet = new AudioWorkletNode(ctx, "alphatab", {`,
+    replace: `		BrowserUiFacade.createAlphaSynthAudioWorklet(ctx, this._settings).then(() => {
+			if (!this.source) return;
+			this._worklet = new AudioWorkletNode(ctx, "alphatab", {`,
+  },
+  {
     // Instead of the "TAB" clef at the start of every line, the first line shows the open-string names
     // (E B G D A E) next to their strings and later lines start straight away.
     why: 'string names instead of the TAB clef',

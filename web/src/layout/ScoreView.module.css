@@ -1,6 +1,8 @@
 /* The only scrollable region of the page. */
 .scoreView {
   position: relative;
+  /* alphaTab gives its cursor layer z-index 1000; keep that inside the score area. */
+  isolation: isolate;
   overflow-x: hidden;
   overflow-y: auto;
   min-height: 0;
@@ -8,10 +10,48 @@
   color: var(--score-text);
 }
 
+/* The score uses the full width of the window, with a small margin either side, like the reference layout. */
 .sheet {
-  max-width: 1280px;
   margin: 0 auto;
-  padding: 8px 16px 48px;
+  padding: 8px clamp(12px, 4vw, 96px) 48px;
+}
+
+/* alphaTab's element and the edit cursor, which is placed in the same coordinates. */
+.stage {
+  position: relative;
+}
+
+.editBeat,
+.editNote {
+  position: absolute;
+  z-index: 1001;
+  pointer-events: none;
+  border-radius: 4px;
+}
+
+/* The beat being edited: a soft column. */
+.editBeat {
+  background: rgb(255 159 10 / 10%);
+}
+
+/* The string position being edited: an outlined box, filled when there is a note in it. */
+.editNote {
+  border: 2px solid #ff9f0a;
+  animation: edit-cursor 1s ease-in-out infinite alternate;
+}
+
+.editNote[data-has-note] {
+  background: rgb(255 159 10 / 18%);
+}
+
+@keyframes edit-cursor {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0.45;
+  }
 }
 
 .home {

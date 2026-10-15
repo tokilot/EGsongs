@@ -255,6 +255,27 @@ describe('API', () => {
     second.library.close()
   })
 
+  it('keeps an edited copy of a song and can drop it again', async () => {
+    const api = setup()
+    const song = (await api.json('POST', '/api/songsterr/import', { url: LINK })).body
+    expect(song.edited).toBe(false)
+    expect((await api.call('GET', `/api/songs/${song.id}/edited`)).status).toBe(404)
+
+    const bytes = new Uint8Array([80, 75, 3, 4, 9, 9])
+    const saved = await api.json('PUT', `/api/songs/${song.id}/edited`, bytes)
+    expect(saved.body.edited).toBe(true)
+    const read = await api.call('GET', `/api/songs/${song.id}/edited`)
+    expect(new Uint8Array(await read.response.arrayBuffer())).toEqual(bytes)
+
+    // Switching revision drops the edits made to the old one.
+    const switched = await api.json('POST', `/api/songs/${song.id}/revision`, { revisionId: 6383873 })
+    expect(switched.body.edited).toBe(false)
+    await api.json('PUT', `/api/songs/${song.id}/edited`, bytes)
+    expect((await api.json('DELETE', `/api/songs/${song.id}/edited`)).body.edited).toBe(false)
+    expect((await api.call('GET', `/api/songs/${song.id}/edited`)).status).toBe(404)
+    api.library.close()
+  })
+
   it('lists revisions and switches to another one', async () => {
     const api = setup()
     const song = (await api.json('POST', '/api/songsterr/import', { url: LINK })).body

@@ -21,6 +21,8 @@ export interface Song {
   trackCount: number
   defaultTrack: number
   favorite: boolean
+  /** The tab has been changed in the editor; the edited copy is loaded instead of the source. */
+  edited: boolean
   settings: SongSettings
   createdAt: string
   lastOpenedAt: string | null
@@ -55,6 +57,7 @@ interface SongRow {
   track_count: number
   default_track: number
   favorite: number
+  edited: number
   settings: string
   created_at: string
   last_opened_at: string | null
@@ -103,6 +106,7 @@ function toSong(row: SongRow): Song {
     trackCount: row.track_count,
     defaultTrack: row.default_track,
     favorite: row.favorite === 1,
+    edited: row.edited === 1,
     settings,
     createdAt: row.created_at,
     lastOpenedAt: row.last_opened_at,
@@ -118,6 +122,37 @@ export class Library {
     mkdirSync(this.tabsDir, { recursive: true })
     this.db = new DatabaseSync(path.join(dataDir, 'library.db'))
     this.db.exec(SCHEMA)
+    // Added after the first release; older libraries get the column on first start.
+    const columns = this.db.prepare('PRAGMA table_info(songs)').all() as unknown as Array<{ name: string }>
+    if (!columns.some((column) => column.name === 'edited')) this.db.exec('ALTER TABLE songs ADD COLUMN edited INTEGER NOT NULL DEFAULT 0')
+  }
+
+  /** The tab as changed in the editor (a Guitar Pro 7 file), or null when it has not been edited. */
+  async readEdited(song: Song): Promise<Uint8Array | null> {
+    if (!song.edited) return null
+    try {
+      return await readFile(this.editedPath(song.id))
+    } catch {
+      return null
+    }
+  }
+
+  async saveEdited(id: number, bytes: Uint8Array): Promise<Song | null> {
+    if (!this.get(id)) return null
+    await writeFile(this.editedPath(id), bytes)
+    this.db.prepare('UPDATE songs SET edited = 1 WHERE id = ?').run(id)
+    return this.get(id)
+  }
+
+  /** Back to the tab as imported. */
+  async discardEdited(id: number): Promise<Song | null> {
+    await rm(this.editedPath(id), { force: true })
+    this.db.prepare('UPDATE songs SET edited = 0 WHERE id = ?').run(id)
+    return this.get(id)
+  }
+
+  private editedPath(id: number): string {
+    return path.join(this.tabsDir, `${id}.edited.gp`)
   }
 
   close() {
@@ -239,6 +274,7 @@ export class Library {
     const song = this.get(id)
     if (!song) return false
     this.db.prepare('DELETE FROM songs WHERE id = ?').run(id)
+    await rm(this.editedPath(id), { force: true })
     if (song.source === 'file' && song.fileName) {
       await rm(this.filePath(id, path.extname(song.fileName).slice(1).toLowerCase()), { force: true })
     }

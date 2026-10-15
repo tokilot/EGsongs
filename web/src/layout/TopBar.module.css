@@ -1,109 +1,121 @@
 .topBar {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 6px;
   height: var(--topbar-height);
-  padding: 0 16px;
+  padding: 0 12px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   min-width: 0;
 }
 
-.logo {
+/* My tabs, new, search and help sit at the right end. */
+.nav {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--text);
-  font-weight: 600;
-  font-size: 16px;
-  text-decoration: none;
   flex: none;
+  margin-left: auto;
 }
 
-.topBar > :global(div):first-of-type {
-  flex: 1 1 320px;
-  max-width: 480px;
-  min-width: 140px;
-}
-
-.search {
+/* The favourite star next to the song title: icon only. */
+.starButton {
   display: flex;
+  flex: none;
   align-items: center;
-  gap: 8px;
-  flex: 1;
-  min-width: 0;
-  height: 34px;
-  padding: 0 10px;
-  background: var(--surface-raised);
-  border: 1px solid var(--border);
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  background: none;
+  border: none;
   border-radius: var(--radius);
   color: var(--text-muted);
 }
 
-.search:focus-within {
-  border-color: var(--accent);
+.starButton:hover {
+  background: var(--surface-raised);
 }
 
-.search input {
-  flex: 1;
-  min-width: 0;
+.starButton[aria-pressed='true'] {
+  color: var(--star);
+}
+
+/* Edit, and while editing: save. Lit in the accent colour as long as the editor is open. */
+.editButton {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
   background: none;
   border: none;
-  outline: none;
+  border-radius: var(--radius);
+  color: var(--text-muted);
+}
+
+.editButton:hover:not(:disabled) {
+  background: var(--surface-raised);
   color: var(--text);
 }
 
-.nav {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex: none;
+.editButton[aria-pressed='true'],
+.editButton[aria-pressed='true']:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-text);
 }
 
+.editButton:disabled {
+  opacity: 0.45;
+}
+
+/* Every top bar button: icon above, label below. */
 .navButton {
   display: flex;
+  flex: none;
+  flex-direction: column;
   align-items: center;
-  gap: 6px;
-  min-width: 0;
-  max-width: 200px;
-  height: 34px;
-  padding: 0 10px;
+  justify-content: center;
+  gap: 2px;
+  min-width: 56px;
+  height: 46px;
+  padding: 0 8px;
   background: none;
   border: none;
   border-radius: var(--radius);
   color: var(--text);
+  font-size: 11px;
+  line-height: 1.1;
+  text-decoration: none;
   white-space: nowrap;
 }
 
-.navButton span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.navButton:hover:not(:disabled),
+.navButton:hover,
 .navButton[aria-expanded='true'] {
   background: var(--surface-raised);
 }
 
-.navButton:disabled {
-  color: var(--text-muted);
+/* The star of a favourite song. */
+.navButton[aria-pressed='true'] {
+  color: var(--star);
 }
 
+/* The open song: title over artist, then its star. Shrinks before anything else does. */
 .song {
   display: flex;
   flex: 0 1 auto;
   align-items: center;
-  gap: 8px;
-  margin-left: auto;
+  gap: 6px;
   min-width: 0;
+  padding: 0 6px;
 }
 
 .songTitle {
   display: flex;
   flex: 0 1 auto;
   flex-direction: column;
-  align-items: flex-end;
   min-width: 0;
+  max-width: 320px;
   line-height: 1.25;
 }
 
@@ -130,25 +142,30 @@
   vertical-align: middle;
 }
 
-.iconButton {
+/* The search field inside the search popover. */
+.search {
   display: flex;
-  flex: none;
   align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  background: none;
-  border: none;
-  border-radius: 8px;
+  gap: 8px;
+  height: 34px;
+  padding: 0 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   color: var(--text-muted);
 }
 
-.iconButton:hover {
-  background: var(--surface-raised);
+.search:focus-within {
+  border-color: var(--accent);
 }
 
-.iconButton[aria-pressed='true'] {
-  color: var(--star);
+.search input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text);
 }
 
 /* Popover contents */
