@@ -39,7 +39,10 @@
   opacity: 0.55;
 }
 
-.control[aria-pressed='true'] {
+/* A function that is switched on stays in the accent colour, also under the mouse, so on and off can never
+   be confused. */
+.control[aria-pressed='true'],
+.control[aria-pressed='true']:hover:not(:disabled) {
   background: var(--accent);
   color: var(--accent-text);
 }
@@ -73,8 +76,8 @@
   align-items: center;
   justify-content: center;
   flex: none;
-  width: 56px;
-  height: 52px;
+  width: 67px;
+  height: 62px;
   padding: 0;
   background: var(--accent);
   border: none;
@@ -273,4 +276,150 @@
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Settings popover, laid out like the reference: grouped rows with a coloured icon, label and control. */
+.settings {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 340px;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 12px;
+  background: var(--surface);
+  border-radius: 12px;
+}
+
+.groupTitle {
+  margin: 6px 4px 0;
+  font-size: 15px;
+}
+
+.settingRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+}
+
+.settingRow + .settingRow {
+  border-top: 1px solid var(--border);
+}
+
+.settingIcon {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  color: #ffffff;
+}
+
+.settingIcon[data-tone='violet'] {
+  background: #6e6a9c;
+}
+
+.settingIcon[data-tone='purple'] {
+  background: #a05ad6;
+}
+
+.settingIcon[data-tone='blue'] {
+  background: #2f80ed;
+}
+
+.settingIcon[data-tone='grey'] {
+  background: #7a7b82;
+}
+
+.settingLabel {
+  flex: 1;
+  min-width: 0;
+}
+
+.settingSelect {
+  width: 128px;
+  height: 32px;
+  padding: 0 8px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+}
+
+.settingRange {
+  width: 110px;
+  accent-color: var(--accent);
+}
+
+.settingValue {
+  width: 40px;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: right;
+}
+
+.segmented {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--surface-raised);
+  border-radius: 10px;
+}
+
+.segmented button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 30px;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  color: var(--text);
+}
+
+.segmented button[aria-checked='true'] {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+/* A checkbox drawn as an on/off switch. */
+.switch {
+  position: relative;
+  flex: none;
+  width: 44px;
+  height: 26px;
+  margin: 0;
+  appearance: none;
+  background: var(--border);
+  border-radius: 13px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.switch::after {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  background: #ffffff;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 30%);
+  content: '';
+  transition: transform 0.15s;
+}
+
+.switch:checked {
+  background: var(--accent);
+}
+
+.switch:checked::after {
+  transform: translateX(18px);
 }

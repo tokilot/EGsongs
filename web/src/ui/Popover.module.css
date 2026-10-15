@@ -7,7 +7,7 @@
 
 .panel {
   position: absolute;
-  z-index: 20;
+  z-index: 900;
   min-width: 220px;
   max-width: min(420px, 90vw);
   max-height: min(480px, 70vh);

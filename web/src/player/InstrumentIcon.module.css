@@ -1,0 +1,60 @@
+/* One colour per instrument family; readable on both the light and the dark popovers. */
+.icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
+
+.icon[data-family='acoustic'] {
+  color: #c8873a;
+}
+
+.icon[data-family='electric'] {
+  color: #e0a21b;
+}
+
+.icon[data-family='distortion'] {
+  color: #e8553e;
+}
+
+.icon[data-family='bass'] {
+  color: #9b6bdf;
+}
+
+.icon[data-family='drums'] {
+  color: #8d8f96;
+}
+
+.icon[data-family='keys'],
+.icon[data-family='organ'] {
+  color: #3d8fe0;
+}
+
+.icon[data-family='bells'] {
+  color: #2bb3c0;
+}
+
+.icon[data-family='strings'] {
+  color: #b5674a;
+}
+
+.icon[data-family='voice'] {
+  color: #3cb371;
+}
+
+.icon[data-family='brass'],
+.icon[data-family='wind'] {
+  color: #d4a72c;
+}
+
+.icon[data-family='synth'],
+.icon[data-family='pad'],
+.icon[data-family='effects'] {
+  color: #d05ab5;
+}
+
+.icon[data-family='ethnic'] {
+  color: #a8913c;
+}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react'
 import styles from './Popover.module.css'
 
 interface PopoverProps {
@@ -13,9 +13,16 @@ interface PopoverProps {
   children: ReactNode
 }
 
-/** A small floating panel anchored to its trigger. Closes on outside click and Escape. */
+/** Gap kept between a popover and the window edge. */
+const EDGE = 8
+
+/**
+ * A small floating panel anchored to its trigger. Closes on outside click and Escape, and is nudged back
+ * inside the window when its alignment would push it past an edge.
+ */
 export function Popover({ open, onClose, trigger, placement, align = 'center', label, children }: PopoverProps) {
   const root = useRef<HTMLDivElement>(null)
+  const panel = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!open) return
@@ -36,11 +43,35 @@ export function Popover({ open, onClose, trigger, placement, align = 'center', l
     }
   }, [open, onClose])
 
+  // Keep the panel inside the window: measure it where the CSS put it and shift it sideways if needed.
+  // Content can change size (search results arriving), so re-check whenever it does.
+  useLayoutEffect(() => {
+    const element = panel.current
+    if (!open || !element) return
+    const fit = () => {
+      element.style.translate = ''
+      const box = element.getBoundingClientRect()
+      const limit = document.documentElement.clientWidth - EDGE
+      let shift = 0
+      if (box.right > limit) shift = limit - box.right
+      if (box.left + shift < EDGE) shift = EDGE - box.left
+      if (shift !== 0) element.style.translate = `${Math.round(shift)}px 0`
+    }
+    fit()
+    const observer = new ResizeObserver(fit)
+    observer.observe(element)
+    window.addEventListener('resize', fit)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', fit)
+    }
+  }, [open])
+
   return (
     <div className={styles.anchor} ref={root}>
       {trigger}
       {open && (
-        <div className={`${styles.panel} ${styles[placement]} ${styles[align]}`} role="dialog" aria-label={label}>
+        <div ref={panel} className={`${styles.panel} ${styles[placement]} ${styles[align]}`} role="dialog" aria-label={label}>
           {children}
         </div>
       )}

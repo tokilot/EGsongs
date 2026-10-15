@@ -86,6 +86,30 @@ export function createApp(options: AppOptions) {
     return c.body(new Uint8Array(bytes).buffer, 200, { 'Content-Type': 'application/octet-stream' })
   })
 
+  // The tab as changed in the editor (Guitar Pro 7). Saving replaces it; deleting goes back to the source.
+  app.get('/api/songs/:id/edited', async (c) => {
+    const song = songFrom(c)
+    if (!song) return notFound(c)
+    const bytes = await library.readEdited(song)
+    if (!bytes) return c.json({ error: 'This song has not been edited.' }, 404)
+    return c.body(new Uint8Array(bytes).buffer, 200, { 'Content-Type': 'application/octet-stream' })
+  })
+
+  app.put('/api/songs/:id/edited', async (c) => {
+    const song = songFrom(c)
+    if (!song) return notFound(c)
+    const bytes = new Uint8Array(await c.req.arrayBuffer())
+    if (bytes.length === 0) return c.json({ error: 'The file is empty.' }, 400)
+    if (bytes.length > MAX_UPLOAD_BYTES) return c.json({ error: 'The file is too large.' }, 413)
+    return c.json(await library.saveEdited(song.id, bytes))
+  })
+
+  app.delete('/api/songs/:id/edited', async (c) => {
+    const song = songFrom(c)
+    if (!song) return notFound(c)
+    return c.json(await library.discardEdited(song.id))
+  })
+
   // Raw Songsterr track documents of the pinned revision, to be converted in the browser.
   app.get('/api/songs/:id/tracks', async (c) => {
     const song = songFrom(c)
@@ -154,6 +178,7 @@ export function createApp(options: AppOptions) {
     if (!Number.isInteger(revisionId) || revisionId <= 0) return c.json({ error: 'Invalid revision.' }, 400)
     const meta = await songsterr.getMeta(song.songsterrId, revisionId)
     await songsterr.getAllTracks(meta)
+    await library.discardEdited(song.id)
     return c.json(library.setRevision(song.id, metaInput(meta)))
   })
 

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import * as api from '../api/client.ts'
 import type { PracticeSettings, Song } from '../api/client.ts'
 import { usePlayer } from '../player/usePlayer.ts'
+import { translate } from '../ui/i18n.ts'
 import { SongContext, type SongContextValue } from './useSong.ts'
 
 const SAVE_DELAY_MS = 500
@@ -30,8 +31,10 @@ export function SongProvider({ children }: { children: ReactNode }) {
       try {
         const opened = await api.openSong(id)
         const practice = { ...opened.settings, trackIndex: opened.settings.trackIndex ?? opened.defaultTrack }
-        const source =
-          opened.source === 'songsterr'
+        // A song changed in the tab editor opens as its edited copy (a Guitar Pro file).
+        const source = opened.edited
+          ? ({ kind: 'file', bytes: await api.getEditedSong(id) } as const)
+          : opened.source === 'songsterr'
             ? ({ kind: 'songsterr', info: opened, tracks: await api.getSongTracks(id) } as const)
             : ({ kind: 'file', bytes: await api.getSongFile(id) } as const)
         if (request !== requestId.current) return
@@ -51,9 +54,16 @@ export function SongProvider({ children }: { children: ReactNode }) {
     [player, libraryChanged],
   )
 
-  // The address bar is the source of truth for which song is open.
+  // The address bar is the source of truth for which song is open. Leaving a song with unsaved tab edits
+  // asks first; saying no puts the address back.
+  const shownHash = useRef(window.location.hash)
   useEffect(() => {
     const sync = () => {
+      if (window.location.hash !== shownHash.current && player.editDirty && !window.confirm(translate('曲谱有未保存的修改，确定放弃并离开吗？'))) {
+        history.replaceState(null, '', shownHash.current || '#/')
+        return
+      }
+      shownHash.current = window.location.hash
       const id = songIdFromHash()
       if (id !== null) void load(id)
       else {
@@ -78,6 +88,15 @@ export function SongProvider({ children }: { children: ReactNode }) {
     [load],
   )
 
+  // Closing or reloading the page with unsaved tab edits asks the browser to confirm.
+  const dirty = state.editing?.dirty ?? false
+  useEffect(() => {
+    if (!dirty) return
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault()
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [dirty])
+
   const close = useCallback(() => {
     window.location.hash = '#/'
   }, [])
@@ -92,8 +111,9 @@ export function SongProvider({ children }: { children: ReactNode }) {
       countIn: state.countIn,
       metronome: state.metronome,
       transpose: state.transpose,
+      trackEdits: state.trackEdits,
     }),
-    [state.speed, state.trackIndex, state.looping, state.range, state.countIn, state.metronome, state.transpose],
+    [state.speed, state.trackIndex, state.looping, state.range, state.countIn, state.metronome, state.transpose, state.trackEdits],
   )
   const songId = song?.id
   const ready = state.status === 'ready'

@@ -14,9 +14,9 @@
   --star: #d99a00;
   --shadow: rgb(0 0 0 / 18%);
 
-  --topbar-height: 52px;
-  --controlbar-height: 64px;
-  --control-size: 44px;
+  --topbar-height: 56px;
+  --controlbar-height: 76px;
+  --control-size: 53px;
   --radius: 10px;
 
   color-scheme: light;

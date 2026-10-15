@@ -3,11 +3,65 @@
   color: var(--text-muted);
 }
 
+.mixer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.master {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px 10px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+}
+
+.master input[type='range'] {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent);
+}
+
+.master output {
+  width: 40px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: normal;
+  text-align: right;
+}
+
+/* Lit and pulsing while the track has a note sounding at the playback position. */
+.dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.dot[data-sounding] {
+  background: #34c759;
+  box-shadow: 0 0 6px #34c759;
+  animation: sounding 0.45s ease-in-out infinite alternate;
+}
+
+@keyframes sounding {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0.35;
+  }
+}
+
 .tracks {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  min-width: 340px;
+  min-width: 380px;
   margin: 0;
   padding: 0;
   list-style: none;

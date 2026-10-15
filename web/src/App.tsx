@@ -6,6 +6,7 @@ import { useShortcuts } from './layout/shortcuts.ts'
 import { TopBar } from './layout/TopBar.tsx'
 import { SongProvider } from './library/SongContext.tsx'
 import { PlayerProvider } from './player/PlayerContext.tsx'
+import { TrackEditor } from './player/TrackEditor.tsx'
 import { usePlayer } from './player/usePlayer.ts'
 import { useTheme } from './ui/theme.ts'
 
@@ -20,6 +21,7 @@ function Layout() {
       <TopBar />
       <ScoreView />
       <ControlBar />
+      <TrackEditor />
     </div>
   )
 }
