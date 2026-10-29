@@ -100,7 +100,7 @@ export class SongsterrClient {
     const raw = (await this.request(url)) as Record<string, unknown>
     const meta = pickMeta(raw)
     if (meta.restriction || meta.isRestricted) {
-      throw new SongsterrError('This tab is restricted on Songsterr and cannot be imported.', 403)
+      throw new SongsterrError('This tab is restricted and cannot be imported.', 403)
     }
     await this.writeCache(meta.songId, meta.revisionId, 'meta', meta)
     return meta
@@ -158,10 +158,10 @@ export class SongsterrClient {
       try {
         response = await this.fetchImpl(url, { headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' } })
       } catch (error) {
-        throw new SongsterrError(`Could not reach Songsterr: ${(error as Error).message}`, 502)
+        throw new SongsterrError(`Could not reach the tab site: ${(error as Error).message}`, 502)
       }
-      if (response.status === 404) throw new SongsterrError('Not found on Songsterr.', 404)
-      if (!response.ok) throw new SongsterrError(`Songsterr answered ${response.status}.`, 502)
+      if (response.status === 404) throw new SongsterrError('Not found.', 404)
+      if (!response.ok) throw new SongsterrError(`The tab site answered ${response.status}.`, 502)
       return response.json()
     }
     const result = this.queue.then(run, run)

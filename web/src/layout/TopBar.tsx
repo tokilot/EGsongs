@@ -1,10 +1,11 @@
-import { CircleHelp, ExternalLink, Library, Music, PencilLine, Plus, Save, Search, Star, type LucideIcon } from 'lucide-react'
+import { CircleHelp, Library, Music, PencilLine, Plus, Save, Search, SlidersHorizontal, Star, type LucideIcon } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import * as api from '../api/client.ts'
 import type { Song, SongsterrHit } from '../api/client.ts'
 import { SongList } from '../library/SongList.tsx'
 import { useSong } from '../library/useSong.ts'
 import { SAVE_EDITS_EVENT, useTabEditing } from '../library/useTabEditing.ts'
+import { TONES_HASH, useView } from '../library/useView.ts'
 import { usePlayer } from '../player/usePlayer.ts'
 import { useLanguage } from '../ui/i18n.ts'
 import { Popover } from '../ui/Popover.tsx'
@@ -32,12 +33,13 @@ function NavButton({ icon: Icon, label, expanded, onClick }: NavButtonProps) {
   )
 }
 
-// Left: home, the open song and its star. Right: my tabs, new, search, help. The layout is the user's; the
+// Left: the page switch (library home, guitar tone editor), the open song and its star. Right: my tabs, new, search, help. The layout is the user's; the
 // instrument picker lives in the control bar only (see CLAUDE.md, "顶栏").
 export function TopBar() {
   const { state } = usePlayer()
   const { song, open, close: closeSong, replace, libraryChanged } = useSong()
   const { t } = useLanguage()
+  const view = useView()
   const [panel, setPanel] = useState<PanelId | null>(null)
   const toggle = (id: PanelId) => setPanel((current) => (current === id ? null : id))
   const close = () => setPanel(null)
@@ -79,55 +81,64 @@ export function TopBar() {
 
   return (
     <header className={styles.topBar}>
-      <a
-        className={styles.navButton}
-        href="#/"
-        aria-label={t('曲库首页')}
-        title={t('曲库首页')}
-        onClick={(event) => {
-          event.preventDefault()
-          closeSong()
-        }}
-      >
-        <Music size={20} aria-hidden />
-        <span>Tabs</span>
-      </a>
+      {/* The pages, as a switch: the tabs (library and the open song) or the guitar tone editor. */}
+      <div className={styles.views} role="group" aria-label={t('页面')}>
+        <a
+          className={styles.navButton}
+          href="#/"
+          aria-label={t('曲库首页')}
+          title={t('曲库首页')}
+          aria-current={view !== 'tones' ? 'page' : undefined}
+          onClick={(event) => {
+            event.preventDefault()
+            closeSong()
+          }}
+        >
+          <Music size={20} aria-hidden />
+          <span>Tabs</span>
+        </a>
+        <a className={styles.navButton} href={TONES_HASH} title={t('吉他音色编辑')} aria-current={view === 'tones' ? 'page' : undefined}>
+          <SlidersHorizontal size={20} aria-hidden />
+          <span>{t('吉他音色编辑')}</span>
+        </a>
+      </div>
 
       {song && (
         <div className={styles.song}>
           <div className={styles.songTitle}>
-            <span className={styles.title}>{state.title || song.title}</span>
-            <span className={styles.artist}>
-              {state.artist || song.artist || song.fileName}
-              {song.sourceUrl && (
-                <a href={song.sourceUrl} target="_blank" rel="noreferrer" title={t('在 Songsterr 上打开')} aria-label={t('在 Songsterr 上打开')}>
-                  <ExternalLink size={12} aria-hidden />
-                </a>
-              )}
-            </span>
+            {/* From the tone editor, the title leads back to the song. */}
+            {view === 'tones' ? (
+              <a className={styles.title} href={`#/song/${song.id}`} title={t('回到曲谱')}>
+                {state.title || song.title}
+              </a>
+            ) : (
+              <span className={styles.title}>{state.title || song.title}</span>
+            )}
           </div>
-          <button
-            type="button"
-            className={styles.starButton}
-            aria-label={song.favorite ? t('取消收藏') : t('收藏')}
-            aria-pressed={song.favorite}
-            title={song.favorite ? t('取消收藏') : t('收藏')}
-            onClick={() => void toggleFavorite()}
-          >
-            <Star size={22} aria-hidden fill={song.favorite ? 'currentColor' : 'none'} />
-          </button>
-          {/* First click opens the tab editor, the second saves and closes it. */}
-          <button
-            type="button"
-            className={styles.editButton}
-            aria-label={editing.editing ? t('保存修改') : t('编辑曲谱')}
-            aria-pressed={editing.editing}
-            title={editing.editing ? t('保存修改') + ' (Ctrl+S)' : t('编辑曲谱')}
-            disabled={!editing.canEdit || editing.busy}
-            onClick={() => (editing.editing ? void editing.save() : editing.start())}
-          >
-            {editing.editing ? <Save size={21} aria-hidden /> : <PencilLine size={21} aria-hidden />}
-          </button>
+          {/* Under the title: its star, and edit (first click opens the tab editor, the second saves and closes it). */}
+          <div className={styles.songActions}>
+            <button
+              type="button"
+              className={styles.starButton}
+              aria-label={song.favorite ? t('取消收藏') : t('收藏')}
+              aria-pressed={song.favorite}
+              title={song.favorite ? t('取消收藏') : t('收藏')}
+              onClick={() => void toggleFavorite()}
+            >
+              <Star size={18} aria-hidden fill={song.favorite ? 'currentColor' : 'none'} />
+            </button>
+            <button
+              type="button"
+              className={styles.editButton}
+              aria-label={editing.editing ? t('保存修改') : t('编辑曲谱')}
+              aria-pressed={editing.editing}
+              title={editing.editing ? t('保存修改') + ' (Ctrl+S)' : t('编辑曲谱')}
+              disabled={!editing.canEdit || editing.busy}
+              onClick={() => (editing.editing ? void editing.save() : editing.start())}
+            >
+              {editing.editing ? <Save size={18} aria-hidden /> : <PencilLine size={18} aria-hidden />}
+            </button>
+          </div>
         </div>
       )}
 
@@ -136,7 +147,7 @@ export function TopBar() {
         {panelFor(
           'new',
           Plus,
-          t('新建'),
+          t('新建曲谱'),
           <NewSong
             onDone={(id) => {
               close()
@@ -186,8 +197,15 @@ function SearchPanel({ onPick }: { onPick: (songId: number) => void }) {
   const { t } = useLanguage()
   const [query, setQuery] = useState('')
   // Results are kept with the query they answer, so answers to an older query are never shown.
-  const [localResult, setLocalResult] = useState<{ query: string; songs: Song[] }>({ query: '', songs: [] })
-  const [remoteResult, setRemoteResult] = useState<{ query: string; hits: SongsterrHit[] | null; error: string | null }>({
+  const [localResult, setLocalResult] = useState<{
+    query: string
+    songs: Song[]
+  }>({ query: '', songs: [] })
+  const [remoteResult, setRemoteResult] = useState<{
+    query: string
+    hits: SongsterrHit[] | null
+    error: string | null
+  }>({
     query: '',
     hits: null,
     error: null,
@@ -216,7 +234,15 @@ function SearchPanel({ onPick }: { onPick: (songId: number) => void }) {
       api
         .searchSongsterr(trimmed, abort.signal)
         .then((hits) => !cancelled && setRemoteResult({ query: trimmed, hits, error: null }))
-        .catch((cause) => !cancelled && setRemoteResult({ query: trimmed, hits: null, error: (cause as Error).message }))
+        .catch(
+          (cause) =>
+            !cancelled &&
+            setRemoteResult({
+              query: trimmed,
+              hits: null,
+              error: (cause as Error).message,
+            }),
+        )
     }, SEARCH_DELAY_MS)
     return () => {
       cancelled = true
@@ -250,7 +276,7 @@ function SearchPanel({ onPick }: { onPick: (songId: number) => void }) {
           ref={input}
           id="song-search"
           type="search"
-          placeholder={t('搜索曲谱（本地曲库 + Songsterr）')}
+          placeholder={t('搜索曲谱（本地曲库 + 在线曲谱）')}
           aria-label={t('搜索曲谱')}
           autoComplete="off"
           value={query}
@@ -276,7 +302,7 @@ function SearchPanel({ onPick }: { onPick: (songId: number) => void }) {
             ))}
           </ul>
 
-          <h2>Songsterr</h2>
+          <h2>{t('在线曲谱')}</h2>
           {remoteError && <p className={styles.error}>{remoteError}</p>}
           {!remoteError && remoteOnly === null && <p className={styles.muted}>{t('正在搜索…')}</p>}
           {remoteOnly?.length === 0 && <p className={styles.muted}>{t('没有更多结果。')}</p>}
@@ -321,7 +347,7 @@ function NewSong({ onDone }: { onDone: (songId: number) => void }) {
 
   return (
     <div className={styles.newSong}>
-      <h2>{t('粘贴 Songsterr 链接')}</h2>
+      <h2>{t('粘贴链接')}</h2>
       <form
         onSubmit={(event) => {
           event.preventDefault()
@@ -330,8 +356,8 @@ function NewSong({ onDone }: { onDone: (songId: number) => void }) {
       >
         <input
           type="url"
-          placeholder="https://www.songsterr.com/a/wsa/…-tab-s12345"
-          aria-label={t('Songsterr 链接')}
+          placeholder={t('曲谱页面的链接')}
+          aria-label={t('曲谱链接')}
           value={link}
           disabled={busy}
           onChange={(event) => setLink(event.target.value)}

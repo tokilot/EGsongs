@@ -360,7 +360,11 @@ function buildBeat(source: Json, state: TrackState): model.Beat {
     }
   }
 
-  if (source.vibrato === true) beat.vibrato = model.VibratoType.Slight
+  // Left-hand vibrato is usually marked on the beat and on its notes alike; the notes' line is the one drawn
+  // (the beat's would be a second line under it), so the beat only takes it when no note carries it.
+  if (source.vibrato === true && !asArray(source.notes).some((note) => note.vibrato === true || note.wideVibrato === true || note.leftHandVibrato !== undefined)) {
+    beat.vibrato = model.VibratoType.Slight
+  }
   if (source.vibratoWithTremoloBar !== undefined) beat.vibrato = vibratoType(source.vibratoWithTremoloBar)
 
   const brush = source.brushStroke as Json | undefined

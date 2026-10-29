@@ -13,6 +13,11 @@ export interface PracticeSettings {
   transpose?: number
   /** Track name, instrument, tuning and capo changes, keyed by track index. */
   trackEdits?: TrackEdits
+  /** Tones from the library given to tracks, per kind of section: track index -> { clean, overdrive, distortion, bass } -> tone id. */
+  /** Track index -> the id of its tone in the library. Older settings had one per kind of section. */
+  trackTones?: Record<string, string | Record<string, string>>
+  /** The key the note names are read in, picked by hand (a key signature); null or missing follows the tab. */
+  key?: number | null
 }
 
 export interface Song {

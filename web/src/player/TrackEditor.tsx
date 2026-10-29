@@ -1,11 +1,13 @@
-import { Play, X } from 'lucide-react'
+import { Play, SlidersHorizontal, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useLanguage } from '../ui/i18n.ts'
 import { GM_PROGRAMS_EN, GM_PROGRAMS_ZH, programName } from './gmPrograms.ts'
+import { allTones, findTone, toneFamilyOf, toneProgram, type Tone } from './guitarTones.ts'
 import { InstrumentIcon } from './InstrumentIcon.tsx'
 import { openTrackEditor, useTrackEditor } from './trackEditorStore.ts'
 import {
-  INSTRUMENT_GROUPS,
+  INSTRUMENT_CATEGORIES,
+  instrumentPlace,
   isBassTuning,
   MAX_CAPO,
   MAX_STRINGS,
@@ -48,9 +50,14 @@ function EditorDialog({ index, current }: { index: number; current: TrackSetup }
   const [tuning, setTuning] = useState(current.tuning)
   const [capo, setCapo] = useState(current.capo)
   const [adjust, setAdjust] = useState(state.trackEdits[index]?.adjustFingering ?? true)
-  const [group, setGroup] = useState(() => INSTRUMENT_GROUPS.findIndex((item) => item.programs.includes(current.program)))
+  // Opens on the category and kind of the track's own instrument.
+  const [place, setPlace] = useState(() => instrumentPlace(current.program))
   const [search, setSearch] = useState('')
   const [message, setMessage] = useState<string | null>(null)
+  // A tone from the library, picked among the instruments of its kind; none means the sound font's samples.
+  const savedTone = findTone(state.toneLibrary, state.trackTones[index])?.id ?? null
+  const [toneId, setToneId] = useState<string | null>(savedTone)
+  const tone = findTone(state.toneLibrary, toneId ?? undefined)
 
   const close = () => openTrackEditor(null)
   useEffect(() => {
@@ -68,10 +75,23 @@ function EditorDialog({ index, current }: { index: number; current: TrackSetup }
   const tuningChanged = !sameTuning(tuning, current.tuning) || capo !== current.capo
   const programs = useMemo(() => {
     const query = search.trim().toLowerCase()
-    const pool = query ? GM_PROGRAMS_EN.map((_, program) => program) : (INSTRUMENT_GROUPS[group]?.programs ?? [])
+    const pool = query ? GM_PROGRAMS_EN.map((_, program) => program) : (INSTRUMENT_CATEGORIES[place.category]?.subs[place.sub]?.programs ?? [])
     // Either language matches, whatever the interface shows.
     return pool.filter((program) => !query || GM_PROGRAMS_EN[program].toLowerCase().includes(query) || GM_PROGRAMS_ZH[program].includes(query))
-  }, [group, search])
+  }, [place, search])
+  // The library's tones go with the electric guitars and the basses, by what each tone is for.
+  const toneLabel = (item: Tone) => (item.builtIn ? t(item.name) : item.name)
+  const query = search.trim().toLowerCase()
+  const toneFamily = query ? null : toneFamilyOf(INSTRUMENT_CATEGORIES[place.category]?.subs[place.sub]?.programs[0] ?? -1)
+  const tones =
+    query || toneFamily
+      ? allTones(state.toneLibrary).filter((item) => (query ? toneLabel(item).toLowerCase().includes(query) : item.family === toneFamily))
+      : []
+  // The picked tone plays the preview (and stands in for itself, unchanged, on the tracks that use it).
+  useEffect(() => {
+    player.setEditedTone(tone)
+    return () => player.setEditedTone(null)
+  }, [player, tone])
 
   // While the tab is being edited, a change is made to the track as it stands (and saved with the tab);
   // otherwise the edit is kept against the song as loaded.
@@ -90,12 +110,19 @@ function EditorDialog({ index, current }: { index: number; current: TrackSetup }
       // Fingerings are always adjusted when strings come or go; otherwise it is the user's choice.
       if (edit.tuning || edit.capo !== undefined) edit.adjustFingering = stringsChanged || adjust
     }
-    if (editingTab && Object.keys(edit).length === 0) {
+    const toneChanged = toneId !== savedTone
+    if (toneChanged) player.setTrackTone(index, toneId)
+    if (Object.keys(edit).length === 0 && (editingTab || (toneChanged && !state.trackEdits[index]))) {
       close()
       return
     }
     const moved = player.setTrackEdit(index, Object.keys(edit).length > 0 ? edit : null)
-    if (moved > 0) setMessage(t('已应用；{n} 个音超出音域或无弦可放，已移动八度或删除。', { n: moved }))
+    if (moved > 0)
+      setMessage(
+        t('已应用；{n} 个音超出音域或无弦可放，已移动八度或删除。', {
+          n: moved,
+        }),
+      )
     else close()
   }
 
@@ -120,15 +147,15 @@ function EditorDialog({ index, current }: { index: number; current: TrackSetup }
           <>
             <section className={styles.section}>
               <h3>{t('乐器')}</h3>
-              <div className={styles.groups} role="tablist" aria-label={t('乐器分组')}>
-                {INSTRUMENT_GROUPS.map((item, position) => (
+              <div className={styles.groups} role="tablist" aria-label={t('乐器大类')}>
+                {INSTRUMENT_CATEGORIES.map((item, position) => (
                   <button
                     key={item.label}
                     type="button"
                     role="tab"
-                    aria-selected={!search && group === position}
+                    aria-selected={!search && place.category === position}
                     onClick={() => {
-                      setGroup(position)
+                      setPlace({ category: position, sub: 0 })
                       setSearch('')
                     }}
                   >
@@ -136,6 +163,21 @@ function EditorDialog({ index, current }: { index: number; current: TrackSetup }
                   </button>
                 ))}
               </div>
+              {!search && (
+                <div className={styles.subGroups} role="tablist" aria-label={t('乐器小类')}>
+                  {INSTRUMENT_CATEGORIES[place.category].subs.map((item, position) => (
+                    <button
+                      key={item.label}
+                      type="button"
+                      role="tab"
+                      aria-selected={place.sub === position}
+                      onClick={() => setPlace({ ...place, sub: position })}
+                    >
+                      {t(item.label)}
+                    </button>
+                  ))}
+                </div>
+              )}
               <div className={styles.searchRow}>
                 <input
                   type="search"
@@ -144,18 +186,46 @@ function EditorDialog({ index, current }: { index: number; current: TrackSetup }
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
                 />
-                <button type="button" className={styles.preview} disabled={!state.canPlay} onClick={() => player.previewInstrument(program, tuning)}>
+                <button
+                  type="button"
+                  className={styles.preview}
+                  disabled={!state.canPlay}
+                  onClick={() => (tone ? player.previewEditedTone() : player.previewInstrument(program, tuning))}
+                >
                   <Play size={14} aria-hidden />
                   {t('试听')}
                 </button>
               </div>
               <ul className={styles.programs} aria-label={t('乐器')}>
-                {programs.length === 0 && <li className={styles.hint}>{t('没有找到乐器。')}</li>}
+                {programs.length === 0 && tones.length === 0 && <li className={styles.hint}>{t('没有找到乐器。')}</li>}
                 {programs.map((value) => (
                   <li key={value}>
-                    <button type="button" aria-pressed={value === program} onClick={() => setProgram(value)}>
+                    <button
+                      type="button"
+                      aria-pressed={!tone && value === program}
+                      onClick={() => {
+                        setProgram(value)
+                        setToneId(null)
+                      }}
+                    >
                       <InstrumentIcon program={value} size={15} />
                       <span>{programName(value, language)}</span>
+                    </button>
+                  </li>
+                ))}
+                {tones.map((item) => (
+                  <li key={item.id}>
+                    <button
+                      type="button"
+                      aria-pressed={tone?.id === item.id}
+                      title={t('音色库里的音色（顶栏「吉他音色编辑」）')}
+                      onClick={() => {
+                        setProgram(toneProgram(item.family, program))
+                        setToneId(item.id)
+                      }}
+                    >
+                      <SlidersHorizontal size={15} aria-hidden className={styles.toneIcon} />
+                      <span>{toneLabel(item)}</span>
                     </button>
                   </li>
                 ))}
@@ -252,15 +322,22 @@ function EditorDialog({ index, current }: { index: number; current: TrackSetup }
           <button
             type="button"
             className={styles.secondary}
-            disabled={editingTab ? !differs(original) : !state.trackEdits[index]}
+            disabled={(editingTab ? !differs(original) : !state.trackEdits[index]) && !savedTone}
             onClick={() => {
+              if (savedTone) player.setTrackTone(index, null)
               if (editingTab) {
                 // Back to the track as loaded, keeping the pitches.
                 const tuningBack = !sameTuning(original.tuning, current.tuning) || original.capo !== current.capo
                 player.setTrackEdit(index, {
                   name: original.name,
                   ...(current.isPercussion || original.program === current.program ? {} : { program: original.program }),
-                  ...(current.isPercussion || !tuningBack ? {} : { tuning: original.tuning, capo: original.capo, adjustFingering: true }),
+                  ...(current.isPercussion || !tuningBack
+                    ? {}
+                    : {
+                        tuning: original.tuning,
+                        capo: original.capo,
+                        adjustFingering: true,
+                      }),
                 })
               } else {
                 player.setTrackEdit(index, null)

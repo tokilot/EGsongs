@@ -4,6 +4,9 @@ import { convertToScore, type SongInfo } from '../songsterr/convert.ts'
 import { BPM_MAX, BPM_MIN, DENOMINATORS, FreeMetronome, playCountIn, secondsPerBeat, type CountIn, type MetronomeSettings } from './clicks.ts'
 import { TabEditor, type EditorState, type Flag } from './tabEditor.ts'
 import { applyTrackEdits, trackSetup, type TrackEdit, type TrackEdits, type TrackSetup } from './trackEdits.ts'
+import { AmpSim } from './ampSim.ts'
+import { cleanTrackTones, DEFAULT_TONE_LIBRARY, parseToneLibrary, planAmpBuses, PREVIEW_CHANNELS, PREVIEW_PROGRAM, withTone, withoutTone, type Tone, type ToneFamily, type ToneLibrary, type TrackTones } from './guitarTones.ts'
+import { beatSolfege, type NoteNames } from './solfege.ts'
 import { transposeScore } from './transpose.ts'
 
 export type ScoreSource =
@@ -25,6 +28,11 @@ export interface InitialPractice {
   metronome?: boolean
   transpose?: number
   trackEdits?: TrackEdits
+  /** Tones from the library for the tracks, per kind of section. */
+  /** As stored: a tone id per track, or (older settings) one per kind of section; cleanTrackTones reads both. */
+  trackTones?: unknown
+  /** A key signature picked for the note names; null or missing follows the tab. */
+  key?: number | null
 }
 
 export interface TrackInfo {
@@ -80,6 +88,10 @@ export interface PlayerSnapshot {
   error: string | null
   /** The synthesizer and sound font are loaded, so play() will work. */
   canPlay: boolean
+  /** The sound font is loaded: one-time previews play, with or without a song (canPlay needs a song's MIDI). */
+  canPreview: boolean
+  /** The tone page's sample is playing (over and over, until stopped). */
+  previewingTone: boolean
   /** True during the count-in as well, so the play button offers "pause" to cancel it. */
   playing: boolean
   /** The count-in is clicking; the song has not started and its position does not move. */
@@ -89,6 +101,10 @@ export interface PlayerSnapshot {
   tracks: TrackInfo[]
   /** Tracks that have a note sounding at the current position (and are audible), while playing. */
   sounding: number[]
+  /** The solfège of the beat at the cursor (the edit cursor while editing), for the note-name box. */
+  noteNames: NoteNames | null
+  /** The key the note-name box reads in, picked by hand (a key signature, for the untransposed tab); null follows the tab. */
+  manualKey: number | null
   trackIndex: number
   speed: number
   looping: boolean
@@ -110,6 +126,10 @@ export interface PlayerSnapshot {
   zoom: number
   showNotation: boolean
   preferences: Preferences
+  /** Electric guitar amp simulation: on or off, the tone per bus, the user's tones. Kept in this browser. */
+  toneLibrary: ToneLibrary
+  /** The tones given to this song's tracks (from the library), per kind of section; kept with the song. */
+  trackTones: TrackTones
   barCount: number
   /** Fields the Songsterr converter did not recognise. */
   warnings: string[]
@@ -123,8 +143,15 @@ export const TRANSPOSE_MAX = 12
 const METRONOME_STORAGE_KEY = 'tabs.metronome'
 const PREFERENCES_STORAGE_KEY = 'tabs.preferences'
 const VOLUME_STORAGE_KEY = 'tabs.masterVolume'
+const TONES_STORAGE_KEY = 'tabs.guitarTones'
+
+// The amp chains for the electric guitars. alphaTab's (patched) worklet output calls this hook each time it
+// creates its audio node, to have the guitar buses connected; see the amp bus patches in alphatab-patches.ts.
+const ampSim = new AmpSim()
+;(globalThis as { __tabsAmpBus?: (ctx: AudioContext, node: AudioNode) => void }).__tabsAmpBus = (ctx, node) => ampSim.attach(ctx, node)
 /** A better General MIDI sample set, used when it has been downloaded (`npm run soundfont`). */
-const PREFERRED_SOUND_FONT = 'sounds/FluidR3Mono_GM.sf3'
+// Downloaded by `npm run soundfont`; the first one present is used.
+const PREFERRED_SOUND_FONTS = ['sounds/GeneralUser-GS.sf2', 'sounds/FluidR3Mono_GM.sf3']
 const BUNDLED_SOUND_FONT = 'soundfont/sonivox.sf2'
 
 function clamp(value: number, min: number, max: number): number {
@@ -165,12 +192,16 @@ const EMPTY: PlayerSnapshot = {
   status: 'empty',
   error: null,
   canPlay: false,
+  canPreview: false,
+  previewingTone: false,
   playing: false,
   countingIn: false,
   title: '',
   artist: '',
   tracks: [],
   sounding: [],
+  noteNames: null,
+  manualKey: null,
   trackIndex: 0,
   speed: 1,
   looping: false,
@@ -186,6 +217,8 @@ const EMPTY: PlayerSnapshot = {
   zoom: 1,
   showNotation: false,
   preferences: { fourBarsPerLine: false, showDynamics: false, loopCountIn: false },
+  toneLibrary: DEFAULT_TONE_LIBRARY,
+  trackTones: {},
   barCount: 0,
   warnings: [],
 }
@@ -225,6 +258,7 @@ export class PlayerController {
     freeMetronome: { running: false, ...cleanMetronome(readStorage(METRONOME_STORAGE_KEY, {})) },
     masterVolume: clamp(Number(readStorage(VOLUME_STORAGE_KEY, 1)), 0, 1),
     preferences: cleanPreferences(readStorage(PREFERENCES_STORAGE_KEY, {})),
+    toneLibrary: parseToneLibrary(readStorage(TONES_STORAGE_KEY, null)),
   }
   private readonly listeners = new Set<() => void>()
   /** Kept so a remount (React StrictMode, hot reload) can load the same song again. */
@@ -273,8 +307,8 @@ export class PlayerController {
 
   /** What survives closing a song: display options, preferences, volume and the stand-alone metronome. */
   private blank(): PlayerSnapshot {
-    const { freeMetronome, masterVolume, preferences } = this.snapshot
-    return { ...EMPTY, zoom: this.display.zoom, showNotation: this.display.showNotation, freeMetronome, masterVolume, preferences }
+    const { freeMetronome, masterVolume, preferences, toneLibrary, canPreview, previewingTone } = this.snapshot
+    return { ...EMPTY, zoom: this.display.zoom, showNotation: this.display.showNotation, freeMetronome, masterVolume, preferences, toneLibrary, canPreview, previewingTone }
   }
 
   /** `element` receives the rendered score; `scrollElement` is the scrolling ancestor the cursor is kept visible in. */
@@ -327,13 +361,21 @@ export class PlayerController {
     api.postRenderFinished.on(() => {
       this.measuredSpacing = null
       if (this.snapshot.editing) this.publishEditing(true)
+      // Another track, transposition or song: read the cursor's beat again.
+      else this.showNoteNames(this.beatAtCursor())
     })
+    api.playedBeatChanged.on((beat) => {
+      if (!this.snapshot.editing) this.showNoteNames(beat)
+    })
+    api.soundFontLoaded.on(() => this.update({ canPreview: true }))
     api.playerReady.on(() => {
       this.update({ canPlay: true })
       this.applyPending()
     })
     api.playerStateChanged.on((event) => {
       const playing = event.state === alphaTab.synth.PlayerState.Playing
+      // The song starting cancels the tone sample (alphaTab drops a one-time file when the song plays).
+      if (playing) this.endTonePreview()
       // While our own count-in runs alphaTab is paused, but the user is "playing".
       this.update({ playing: playing || this.countInRun !== null, sounding: playing ? this.snapshot.sounding : [] })
     })
@@ -346,6 +388,8 @@ export class PlayerController {
     api.playerPositionChanged.on((event) => {
       this.applyPending()
       if (api.playerState === alphaTab.synth.PlayerState.Playing) this.updateSounding(event.currentTick)
+      // alphaTab reports the played beat only while playing; a move while paused (arrow keys, a click) comes here.
+      else if (!this.snapshot.editing) this.showNoteNames(this.beatAtCursor())
     })
     api.error.on((error) => {
       console.error(error)
@@ -363,14 +407,23 @@ export class PlayerController {
     this.api = null
   }
 
-  // Use the larger sample set when it is there, otherwise the small one that ships with alphaTab.
+  // Use a larger sample set when one is there, otherwise the small one that ships with alphaTab.
   private async loadSoundFont(api: alphaTab.AlphaTabApi) {
     if (this.soundFont === null) {
-      const preferred = `${import.meta.env.BASE_URL}${PREFERRED_SOUND_FONT}`
-      const found = await fetch(preferred, { method: 'HEAD' })
-        .then((response) => response.ok && !(response.headers.get('content-type') ?? '').includes('text/html'))
-        .catch(() => false)
-      this.soundFont = found ? preferred : `${import.meta.env.BASE_URL}${BUNDLED_SOUND_FONT}`
+      // The dev server answers a missing file with the page itself, hence the content type check.
+      const exists = (url: string) =>
+        fetch(url, { method: 'HEAD' })
+          .then((response) => response.ok && !(response.headers.get('content-type') ?? '').includes('text/html'))
+          .catch(() => false)
+      let chosen = `${import.meta.env.BASE_URL}${BUNDLED_SOUND_FONT}`
+      for (const candidate of PREFERRED_SOUND_FONTS) {
+        const url = `${import.meta.env.BASE_URL}${candidate}`
+        if (await exists(url)) {
+          chosen = url
+          break
+        }
+      }
+      this.soundFont = chosen
     }
     if (this.api !== api) return
     const response = await fetch(this.soundFont)
@@ -433,7 +486,10 @@ export class PlayerController {
       this.baseScore = applyTrackEdits(original, trackEdits, api.settings).score
       const transpose = clamp(Math.round(practice.transpose ?? 0), TRANSPOSE_MIN, TRANSPOSE_MAX)
       const shown = transpose === 0 ? { score: this.baseScore, outOfRange: 0 } : transposeScore(this.baseScore, transpose, api.settings)
-      this.update({ transpose, transposeOutOfRange: shown.outOfRange, trackEdits })
+      const manualKey = typeof practice.key === 'number' && Number.isInteger(practice.key) && Math.abs(practice.key) <= 7 ? practice.key : null
+      this.update({ transpose, transposeOutOfRange: shown.outOfRange, trackEdits, manualKey, trackTones: cleanTrackTones(practice.trackTones) })
+      // Before the MIDI reaches the worker, so the toned tracks load the samples their routes play.
+      this.sendAmpRouting(shown.score)
       this.renderPending = true
       api.renderScore(shown.score, [clamp(practice.trackIndex ?? 0, 0, Math.max(0, original.tracks.length - 1))])
     } catch (error) {
@@ -840,6 +896,16 @@ export class PlayerController {
     const midiFile = new alphaTab.midi.MidiFile()
     const generator = new alphaTab.midi.MidiFileGenerator(buildPreviewScore(program, tuning), api.settings, new alphaTab.midi.AlphaSynthMidiFileHandler(midiFile))
     generator.generate()
+    this.playOneTime(midiFile)
+  }
+
+  // alphaTab wakes the audio output (the browser keeps it suspended until a click asks for sound) when the song
+  // plays, but not for a one-time file: a preview before the song was ever played would be silent. Call this from
+  // the click.
+  private playOneTime(midiFile: alphaTab.midi.MidiFile) {
+    const player = this.api?.player
+    if (!player) return
+    player.output.activate()
     player.playOneTimeMidiFile(midiFile)
   }
 
@@ -1034,6 +1100,148 @@ export class PlayerController {
     this.publishEditing(true)
   }
 
+  // ---- tones (the library, and the tones given to tracks) ----
+
+  // The buses as last planned, and the tone open in the tone editor (its unsaved knobs play at once).
+  private ampBuses: Tone[] = []
+  private editedTone: Tone | null = null
+
+  // Plans the amp buses for the score's tracks and tells the synthesizer; the chains follow.
+  private sendAmpRouting(score: alphaTab.model.Score | null = this.api?.score ?? null) {
+    const tracks = (score?.tracks ?? []).map((track) => ({
+      index: track.index,
+      isPercussion: track.isPercussion,
+      channels: [track.playbackInfo.primaryChannel, track.playbackInfo.secondaryChannel],
+    }))
+    const plan = planAmpBuses(tracks, this.snapshot.trackTones, this.snapshot.toneLibrary, this.editedTone)
+    // api.player is a wrapper; the worker belongs to the synthesizer API inside it (created with the AlphaTabApi).
+    const worker = (this.api?.player as unknown as { instance?: { worker?: Worker } } | null)?.instance?.worker
+    worker?.postMessage({ cmd: 'tabs.setAmpRouting', routing: plan.routing, buses: plan.buses.length })
+    this.ampBuses = plan.buses
+    this.applyTones()
+  }
+
+  // Every bus plays its tone as saved; the preview bus (the last one, while a tone is open in the editor) plays the
+  // editor's unsaved knobs. The song's tracks only change when the tone is saved.
+  private applyTones() {
+    for (let bus = 1; bus <= 8; bus++) ampSim.setTone(bus, this.ampBuses[bus - 1]?.chain ?? null)
+  }
+
+  private storeLibrary(library: ToneLibrary) {
+    writeStorage(TONES_STORAGE_KEY, library)
+    this.update({ toneLibrary: library })
+  }
+
+  /** Adds or replaces one of the user's tones. */
+  saveTone(tone: Tone) {
+    this.storeLibrary(withTone(this.snapshot.toneLibrary, tone))
+    this.sendAmpRouting()
+  }
+
+  /** Removes one of the user's tones; tracks that had it play the samples again. */
+  deleteTone(id: string) {
+    const used = this.ampBuses.some((tone) => tone.id === id)
+    this.storeLibrary(withoutTone(this.snapshot.toneLibrary, id))
+    this.sendAmpRouting()
+    if (used) this.reloadMidi()
+  }
+
+  /**
+   * The tone open in the tone editor, with its knobs as they are now (null when none). It plays on the preview
+   * bus only: the open song keeps the saved tones.
+   */
+  setEditedTone(tone: Tone | null) {
+    const routingChanges = (tone === null) !== (this.editedTone === null) || (tone && this.editedTone && (tone.id !== this.editedTone.id || tone.family !== this.editedTone.family))
+    this.editedTone = tone
+    if (tone === null) this.stopTonePreview()
+    if (routingChanges) this.sendAmpRouting()
+    else if (tone) {
+      this.ampBuses[this.ampBuses.length - 1] = tone
+      this.applyTones()
+    }
+  }
+
+  private tonePreviewTimer: number | null = null
+
+  /**
+   * Plays the tone open in the editor on a short scale sample (the same for every tone, so they can be compared),
+   * on the preview channels. With `loop` it starts over until stopTonePreview() or the song plays.
+   */
+  previewEditedTone(loop = false) {
+    const api = this.api
+    const tone = this.editedTone
+    if (!api?.player || !tone || !this.snapshot.canPreview) return
+    if (this.snapshot.playing) this.playPause()
+    if (this.tonePreviewTimer !== null) window.clearTimeout(this.tonePreviewTimer)
+    this.tonePreviewTimer = null
+    const midiFile = new alphaTab.midi.MidiFile()
+    const sample = buildToneSample(tone.family, PREVIEW_CHANNELS)
+    new alphaTab.midi.MidiFileGenerator(sample.score, api.settings, new alphaTab.midi.AlphaSynthMidiFileHandler(midiFile)).generate()
+    this.playOneTime(midiFile)
+    if (!loop) return this.endTonePreview()
+    this.tonePreviewTimer = window.setTimeout(() => this.previewEditedTone(true), sample.seconds * 1000)
+    if (!this.snapshot.previewingTone) this.update({ previewingTone: true })
+  }
+
+  /** Stops the looping tone sample. */
+  stopTonePreview() {
+    if (this.tonePreviewTimer === null) return
+    this.endTonePreview()
+    // An empty one-time file takes the sample's place and ends at once.
+    this.api?.player?.playOneTimeMidiFile(new alphaTab.midi.MidiFile())
+  }
+
+  private endTonePreview() {
+    if (this.tonePreviewTimer !== null) window.clearTimeout(this.tonePreviewTimer)
+    this.tonePreviewTimer = null
+    if (this.snapshot.previewingTone) this.update({ previewingTone: false })
+  }
+
+  /**
+   * The tone of one track (null for none: it plays the samples). The synthesizer picks a channel's samples at its
+   * program changes, so the MIDI is loaded again.
+   */
+  setTrackTone(index: number, id: string | null) {
+    const trackTones = { ...this.snapshot.trackTones }
+    if (id) trackTones[index] = id
+    else delete trackTones[index]
+    this.update({ trackTones })
+    this.sendAmpRouting()
+    this.reloadMidi()
+  }
+
+  /** How loud the amp chains are right now; for the checks. */
+  guitarAmpLevel(): number {
+    return ampSim.level()
+  }
+
+  /** The spectrum of the amp chains right now (dB per bin); for matching a tone against a recording. */
+  guitarAmpSpectrum(): { db: number[]; sampleRate: number } | null {
+    const spectrum = ampSim.spectrum()
+    return spectrum ? { db: Array.from(spectrum.db), sampleRate: spectrum.sampleRate } : null
+  }
+
+  // Loads the MIDI again (after the routing changed), keeping position, loop range, mixer and playback.
+  private reloadMidi() {
+    const api = this.api
+    if (!api || this.snapshot.status !== 'ready' || !api.score) return
+    const playing = api.playerState === alphaTab.synth.PlayerState.Playing
+    const tick = api.tickPosition
+    if (playing) api.pause()
+    api.loadMidiForScore()
+    this.midiStale = false
+    this.applyMixer()
+    if (this.snapshot.range) {
+      try {
+        api.playbackRange = this.snapshot.range
+      } catch {
+        // the range no longer fits
+      }
+    }
+    api.tickPosition = tick
+    if (playing) api.play()
+  }
+
   // Loads the MIDI for the edited tab when it is out of date, putting back what that resets.
   private syncEditedMidi(fromCursor: boolean) {
     const api = this.api
@@ -1060,13 +1268,34 @@ export class PlayerController {
     return bar ? bar.start + editor.beat.playbackStart : null
   }
 
+  /** The shown track's beat at the playback position. */
+  private beatAtCursor(): alphaTab.model.Beat | null {
+    const api = this.api
+    return api?.tickCache?.findBeat(new Set([this.snapshot.trackIndex]), api.tickPosition)?.beat ?? null
+  }
+
+  /** Reads the note names in this key (a key signature) from now on; null goes back to the tab's own key. */
+  setManualKey(key: number | null) {
+    this.update({ manualKey: key })
+    const editor = this.snapshot.editing ? this.editor : null
+    this.showNoteNames(editor ? editor.beat : this.beatAtCursor())
+  }
+
+  // Updated only when what it shows changes: the played beat changes many times a second.
+  private showNoteNames(beat: alphaTab.model.Beat | null) {
+    const names = beat ? beatSolfege(beat, this.snapshot.manualKey, this.snapshot.transpose) : null
+    if (JSON.stringify(names) !== JSON.stringify(this.snapshot.noteNames)) this.update({ noteNames: names })
+  }
+
   // Sends the editor state (and where to draw its cursor) to the UI.
   private publishEditing(scroll: boolean) {
     const editor = this.editor
     if (!editor) {
       this.update({ editing: null })
+      this.showNoteNames(this.beatAtCursor())
       return
     }
+    this.showNoteNames(editor.beat)
     const boxes = this.editSelected ? this.measureCursor(editor) : { noteBox: null, beatBox: null }
     this.update({ editing: { ...editor.state(), editable: editor.editable, selected: this.editSelected, ...boxes } })
     if (scroll && boxes.beatBox) this.revealBox(boxes.beatBox)
@@ -1253,7 +1482,7 @@ function buildSoundingSpans(score: alphaTab.model.Score): SoundingSpan[][][] {
 }
 
 // One bar of eighth notes up the open strings, then a held chord of all of them.
-function buildPreviewScore(program: number, tuning: number[]): alphaTab.model.Score {
+function buildPreviewScore(program: number, tuning: number[], channels = [0, 1]): alphaTab.model.Score {
   const { model } = alphaTab
   const score = new model.Score()
   const strings = tuning.length > 0 ? tuning : [64, 59, 55, 50, 45, 40]
@@ -1267,8 +1496,8 @@ function buildPreviewScore(program: number, tuning: number[]): alphaTab.model.Sc
   const track = new model.Track()
   track.ensureStaveCount(1)
   track.playbackInfo.program = program
-  track.playbackInfo.primaryChannel = 0
-  track.playbackInfo.secondaryChannel = 1
+  track.playbackInfo.primaryChannel = channels[0]
+  track.playbackInfo.secondaryChannel = channels[1]
   const staff = track.staves[0]
   staff.stringTuning = new model.Tuning('', strings, false)
   score.addTrack(track)
@@ -1307,4 +1536,91 @@ function buildPreviewScore(program: number, tuning: number[]): alphaTab.model.Sc
   })
   score.finish(new alphaTab.Settings())
   return score
+}
+
+// The tone page's sample: a scale up and down, then a few chords, the same every time so that tones can be
+// compared. Strings count from the lowest (alphaTab's numbering); each beat is [duration, [string, fret]...].
+type SampleBeat = [alphaTab.model.Duration, Array<[number, number]>]
+const E = alphaTab.model.Duration.Eighth
+const Q = alphaTab.model.Duration.Quarter
+const W = alphaTab.model.Duration.Whole
+const eighths = (notes: Array<[number, number]>): SampleBeat[] => notes.map((note) => [E, [note]])
+const TONE_SAMPLES: Record<ToneFamily, { tuning: number[]; tempo: number; bars: SampleBeat[][] }> = {
+  // A minor pentatonic at the fifth fret, then A5 A5 C5 D5 and an open A minor.
+  guitar: {
+    tuning: [64, 59, 55, 50, 45, 40],
+    tempo: 100,
+    bars: [
+      eighths([[1, 5], [1, 8], [2, 5], [2, 7], [3, 5], [3, 7], [4, 5], [4, 7]]),
+      eighths([[5, 5], [5, 8], [6, 5], [6, 8], [6, 5], [5, 8], [5, 5], [4, 7]]),
+      [...eighths([[4, 5], [3, 7], [3, 5], [2, 7], [2, 5], [1, 8]]), [Q, [[1, 5]]]],
+      [
+        [Q, [[1, 5], [2, 7], [3, 7]]],
+        [Q, [[1, 5], [2, 7], [3, 7]]],
+        [Q, [[1, 8], [2, 10], [3, 10]]],
+        [Q, [[2, 5], [3, 7], [4, 7]]],
+      ],
+      [[W, [[2, 0], [3, 2], [4, 2], [5, 1], [6, 0]]]],
+    ],
+  },
+  // E minor pentatonic in open position, then E E G A and a held E.
+  bass: {
+    tuning: [43, 38, 33, 28],
+    tempo: 100,
+    bars: [
+      eighths([[1, 0], [1, 3], [2, 0], [2, 2], [3, 0], [3, 2], [4, 0], [4, 2]]),
+      [...eighths([[4, 0], [3, 2], [3, 0], [2, 2], [2, 0], [1, 3]]), [Q, [[1, 0]]]],
+      [
+        [Q, [[1, 0]]],
+        [Q, [[1, 0]]],
+        [Q, [[1, 3]]],
+        [Q, [[2, 0]]],
+      ],
+      [[W, [[1, 0]]]],
+    ],
+  },
+}
+
+function buildToneSample(family: ToneFamily, channels: number[]): { score: alphaTab.model.Score; seconds: number } {
+  const { model } = alphaTab
+  const sample = TONE_SAMPLES[family]
+  const score = new model.Score()
+  for (let index = 0; index < sample.bars.length; index++) {
+    const masterBar = new model.MasterBar()
+    masterBar.timeSignatureNumerator = 4
+    masterBar.timeSignatureDenominator = 4
+    if (index === 0) masterBar.tempoAutomations.push(model.Automation.buildTempoAutomation(false, 0, sample.tempo, 2))
+    score.addMasterBar(masterBar)
+  }
+  const track = new model.Track()
+  track.ensureStaveCount(1)
+  track.playbackInfo.program = PREVIEW_PROGRAM[family]
+  track.playbackInfo.primaryChannel = channels[0]
+  track.playbackInfo.secondaryChannel = channels[1]
+  const staff = track.staves[0]
+  staff.stringTuning = new model.Tuning('', sample.tuning, false)
+  score.addTrack(track)
+  for (const beats of sample.bars) {
+    const bar = new model.Bar()
+    staff.addBar(bar)
+    const voice = new model.Voice()
+    bar.addVoice(voice)
+    for (const [duration, notes] of beats) {
+      const beat = new model.Beat()
+      beat.duration = duration
+      if (notes.length > 2) {
+        beat.brushType = model.BrushType.BrushDown
+        beat.brushDuration = 60
+      }
+      for (const [string, fret] of notes) {
+        const note = new model.Note()
+        note.string = string
+        note.fret = fret
+        beat.addNote(note)
+      }
+      voice.addBeat(beat)
+    }
+  }
+  score.finish(new alphaTab.Settings())
+  return { score, seconds: (sample.bars.length * 4 * 60) / sample.tempo }
 }

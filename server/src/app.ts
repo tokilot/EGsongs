@@ -115,7 +115,7 @@ export function createApp(options: AppOptions) {
     const song = songFrom(c)
     if (!song) return notFound(c)
     if (song.source !== 'songsterr' || song.songsterrId === null || song.revisionId === null) {
-      return c.json({ error: 'This song did not come from Songsterr.' }, 400)
+      return c.json({ error: 'This song was not imported from a link.' }, 400)
     }
     const meta = await songsterr.getMeta(song.songsterrId, song.revisionId)
     return c.json({ tracks: await songsterr.getAllTracks(meta) })
@@ -136,7 +136,7 @@ export function createApp(options: AppOptions) {
   app.post('/api/songsterr/import', async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
     const songsterrId = parseSongId(String(body.url ?? body.songId ?? ''))
-    if (songsterrId === null) return c.json({ error: 'That is not a Songsterr song link.' }, 400)
+    if (songsterrId === null) return c.json({ error: 'That is not a tab link that can be imported.' }, 400)
     const existing = library.findBySongsterrId(songsterrId)
     if (existing) return c.json(existing)
 
@@ -172,7 +172,7 @@ export function createApp(options: AppOptions) {
   app.post('/api/songs/:id/revision', async (c) => {
     const song = songFrom(c)
     if (!song) return notFound(c)
-    if (song.songsterrId === null) return c.json({ error: 'This song did not come from Songsterr.' }, 400)
+    if (song.songsterrId === null) return c.json({ error: 'This song was not imported from a link.' }, 400)
     const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
     const revisionId = Number(body.revisionId)
     if (!Number.isInteger(revisionId) || revisionId <= 0) return c.json({ error: 'Invalid revision.' }, 400)

@@ -102,6 +102,30 @@
   color: var(--accent-text);
 }
 
+/* The kinds within the chosen category: lighter than the categories above them. */
+.subGroups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 6px 0 2px;
+}
+
+.subGroups button {
+  height: 26px;
+  padding: 0 10px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.subGroups button[aria-selected='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
 .searchRow {
   display: flex;
   gap: 6px;
@@ -168,6 +192,16 @@
 }
 
 .programs button[aria-pressed='true'] [data-family] {
+  color: inherit;
+}
+
+/* A tone of the library, among the instruments of its kind. */
+.toneIcon {
+  flex: none;
+  color: var(--accent);
+}
+
+.programs button[aria-pressed='true'] .toneIcon {
   color: inherit;
 }
 

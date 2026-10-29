@@ -44,15 +44,80 @@ export interface InstrumentGroup {
   programs: number[]
 }
 
+export interface InstrumentCategory {
+  /** Chinese label; the UI translates it. */
+  label: string
+  subs: InstrumentGroup[]
+}
+
 const range = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, index) => from + index)
 
-export const INSTRUMENT_GROUPS: InstrumentGroup[] = [
-  { label: '吉他', programs: [...range(24, 31), 104, 105, 106, 107] },
-  { label: '贝斯', programs: range(32, 39) },
-  { label: '钢琴', programs: range(0, 7) },
-  { label: '管弦', programs: range(40, 79) },
-  { label: '其他', programs: [...range(8, 23), ...range(80, 103), ...range(108, 127)] },
+/** The instrument picker: category, then kind, then the General MIDI sound. Every program appears once. */
+export const INSTRUMENT_CATEGORIES: InstrumentCategory[] = [
+  {
+    label: '吉他',
+    subs: [
+      { label: '电吉他', programs: range(26, 31) },
+      { label: '木吉他', programs: range(24, 25) },
+      { label: '贝斯', programs: range(32, 39) },
+      { label: '民族弹拨', programs: range(104, 107) },
+    ],
+  },
+  {
+    label: '弦乐',
+    subs: [
+      { label: '提琴', programs: range(40, 44) },
+      { label: '拨奏与竖琴', programs: range(45, 46) },
+      { label: '弦乐合奏', programs: range(48, 51) },
+      { label: '民族弦乐', programs: [110] },
+    ],
+  },
+  {
+    label: '管乐',
+    subs: [
+      { label: '铜管', programs: range(56, 63) },
+      { label: '簧管', programs: range(64, 71) },
+      { label: '吹管', programs: range(72, 79) },
+      { label: '民族管', programs: [109, 111] },
+    ],
+  },
+  {
+    label: '打击乐',
+    subs: [
+      { label: '有音高打击乐', programs: range(8, 15) },
+      { label: '定音鼓', programs: [47] },
+      { label: '打击乐器', programs: range(112, 119) },
+    ],
+  },
+  {
+    label: '键盘乐',
+    subs: [
+      { label: '钢琴', programs: range(0, 7) },
+      { label: '风琴', programs: range(16, 23) },
+      { label: '卡林巴', programs: [108] },
+    ],
+  },
+  {
+    label: '其他',
+    subs: [
+      { label: '人声', programs: range(52, 54) },
+      { label: '管弦乐打击', programs: [55] },
+      { label: '合成主音', programs: range(80, 87) },
+      { label: '合成铺底', programs: range(88, 95) },
+      { label: '合成效果', programs: range(96, 103) },
+      { label: '音效', programs: range(120, 127) },
+    ],
+  },
 ]
+
+/** Where a program sits in the picker: category and kind, by position. */
+export function instrumentPlace(program: number): { category: number; sub: number } {
+  for (const [category, item] of INSTRUMENT_CATEGORIES.entries()) {
+    const sub = item.subs.findIndex((group) => group.programs.includes(program))
+    if (sub >= 0) return { category, sub }
+  }
+  return { category: 0, sub: 0 }
+}
 
 export interface TuningPreset {
   /** Chinese key for descriptive names ("标准"); note-based names ("Drop D") are the same in every language. */

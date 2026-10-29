@@ -4,7 +4,7 @@ import { midi, model, Settings } from '@coderline/alphatab'
 import { describe, expect, it } from 'vitest'
 import { FIXTURES } from '../fixtures.ts'
 import { convertToScore } from '../songsterr/convert.ts'
-import { applyTrackEdits, isBassTuning, MAX_STRINGS, resizeTuning, trackSetup, tuningPresets } from './trackEdits.ts'
+import { applyTrackEdits, INSTRUMENT_CATEGORIES, instrumentPlace, isBassTuning, MAX_STRINGS, resizeTuning, trackSetup, tuningPresets } from './trackEdits.ts'
 import { MAX_FRET } from './transpose.ts'
 
 const cacheDir = path.resolve(import.meta.dirname, '../../../data/songsterr')
@@ -111,5 +111,19 @@ describe.skipIf(!available)('applyTrackEdits', () => {
     expect(score.tracks[drums].name).toBe('Kit')
     expect(score.tracks[drums].staves[0].isPercussion).toBe(true)
     expect(trackSetup(score, drums)?.isPercussion).toBe(true)
+  })
+})
+
+describe('instrument picker', () => {
+  it('lists every General MIDI program exactly once', () => {
+    const programs = INSTRUMENT_CATEGORIES.flatMap((category) => category.subs.flatMap((sub) => sub.programs)).sort((a, b) => a - b)
+    expect(programs).toEqual(Array.from({ length: 128 }, (_, index) => index))
+  })
+
+  it('opens where a program sits', () => {
+    expect(instrumentPlace(30)).toEqual({ category: 0, sub: 0 })
+    expect(instrumentPlace(33)).toEqual({ category: 0, sub: 2 })
+    expect(instrumentPlace(0)).toEqual({ category: 4, sub: 0 })
+    expect(instrumentPlace(127)).toEqual({ category: 5, sub: 5 })
   })
 })

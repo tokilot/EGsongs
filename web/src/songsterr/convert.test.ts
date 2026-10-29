@@ -260,6 +260,10 @@ describe.skipIf(!available)('songsterr converter', () => {
     expect(notes.some((note) => note.vibrato === model.VibratoType.Slight)).toBe(true)
     expect(notes.some((note) => note.vibrato === model.VibratoType.Wide)).toBe(true)
     expect(notes.some((note) => note.harmonicType === model.HarmonicType.Semi)).toBe(true)
+    // The tab marks vibrato on the beat and on its notes alike; only the notes' line is drawn, so the beats
+    // that have a vibrato of their own are the whammy bar's.
+    const doubled = score.tracks.flatMap(allBeats).filter((beat) => beat.vibrato !== model.VibratoType.None && beat.notes.some((note) => note.vibrato !== model.VibratoType.None))
+    expect(doubled).toEqual([])
   })
 
   it('#9 has gradual tempo changes', () => {
