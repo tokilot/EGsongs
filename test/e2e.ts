@@ -140,7 +140,9 @@ async function main() {
   await check('control bar has 13 buttons plus the source switch, on one row', async () => {
     const rows = await page.evaluate(() => {
       const footer = document.querySelector('footer')!
-      const buttons = [...footer.querySelectorAll(':scope > button, :scope > div > button:not([role="radio"])')]
+      // The buttons are the middle one of the control bar's three columns.
+      const bar = footer.children[1]
+      const buttons = [...bar.querySelectorAll(':scope > button, :scope > div > button:not([role="radio"])')]
       const radios = footer.querySelectorAll('[role="radio"]').length
       const centers = buttons.map((button) => {
         const box = button.getBoundingClientRect()
@@ -157,8 +159,8 @@ async function main() {
 
   console.log('import and render')
   await check('importing a Songsterr link opens the song', async () => {
-    await page.getByRole('button', { name: '新建' }).click()
-    await page.getByLabel('Songsterr 链接').fill(SONG_LINK)
+    await page.getByRole('button', { name: '新建曲谱' }).click()
+    await page.getByLabel('曲谱链接').fill(SONG_LINK)
     await page.getByRole('button', { name: '导入', exact: true }).click()
     await waitReady(page)
     assert(/#\/song\/\d+$/.test(page.url()), `unexpected url ${page.url()}`)
@@ -166,31 +168,44 @@ async function main() {
   await check('top bar: home, song, star, my tabs, new, search, help, each with its icon above the label', async () => {
     const header = page.locator('header')
     await header.getByText('Promise', { exact: true }).waitFor()
-    await header.getByText('Akira Yamaoka').waitFor()
     await shownTrack(page, 'Rhythm Guitar')
-    assert(await header.getByRole('link', { name: '在 Songsterr 上打开' }).isVisible(), 'source link missing')
+    // Only the title: no artist, no link to the site.
+    assert((await header.getByText('Akira Yamaoka').count()) === 0, 'the artist is still in the top bar')
+    assert((await header.locator('a[target="_blank"]').count()) === 0, 'the top bar still links out to the site')
+    assert((await header.boundingBox())!.height === 64, 'the top bar should be 64px high')
+    // Three blocks: the page switch at the left, the song in the middle with its star and edit right under the
+    // title, my tabs … help at the right end. Every button has its icon above its label (the song's two aside).
     const layout = await page.evaluate(() => {
       const header = document.querySelector('header')!
-      const items = [...header.querySelectorAll('a[href="#/"], button, [class*="songTitle"]')].map((element) => {
-        const box = element.getBoundingClientRect()
-        const icon = element.querySelector('svg')?.getBoundingClientRect()
-        const label = element.querySelector('span')?.getBoundingClientRect()
-        const name = element.className.includes('songTitle') ? 'song' : (element.textContent ?? '').trim() || (element.getAttribute('aria-label') ?? '')
-        // Icon above label: the icon ends before the label starts.
-        return { name, left: box.left, stacked: !icon || !label || element.className.includes('songTitle') || icon.bottom <= label.top + 1 }
+      const box = (selector: string) => document.querySelector(selector)!.getBoundingClientRect()
+      const items = [...header.querySelectorAll('a[href="#/"], a[href="#/tones"], nav button')].map((element) => {
+        const place = element.getBoundingClientRect()
+        const icon = element.querySelector('svg')!.getBoundingClientRect()
+        const label = element.querySelector('span')!.getBoundingClientRect()
+        const name = (element.textContent ?? '').trim() || (element.getAttribute('aria-label') ?? '')
+        return { name, left: place.left, stacked: icon.bottom <= label.top + 1 }
       })
-      return { order: items.sort((a, b) => a.left - b.left).map((item) => item.name), stacked: items.every((item) => item.stacked) }
+      const bar = header.getBoundingClientRect()
+      const title = box('[class*="songTitle"]')
+      const actions = box('[class*="songActions"]')
+      return {
+        order: items.sort((a, b) => a.left - b.left).map((item) => item.name),
+        stacked: items.every((item) => item.stacked),
+        // The title is centred on the bar, and the two buttons sit under it.
+        titleOffCentre: Math.abs((title.left + title.right) / 2 - (bar.left + bar.right) / 2),
+        actionsUnder: actions.top >= title.bottom - 1 && Math.abs((actions.left + actions.right) / 2 - (title.left + title.right) / 2) < 40,
+        navRightGap: bar.right - box('header nav').right,
+        navLeft: box('header nav').left - bar.left,
+        width: bar.width,
+        starText: (document.querySelector('header button[aria-pressed]')!.textContent ?? '').trim(),
+      }
     })
-    assert(layout.order.join(' | ') === 'Tabs | song | 收藏 | 编辑曲谱 | 我的曲谱 | 新建 | 搜索曲谱 | 帮助', `order is ${layout.order.join(' | ')}`)
+    assert(layout.order.join(' | ') === 'Tabs | 吉他音色编辑 | 我的曲谱 | 新建曲谱 | 搜索曲谱 | 帮助', `order is ${layout.order.join(' | ')}`)
     assert(layout.stacked, 'a top bar button does not have its icon above its label')
-    const placement = await page.evaluate(() => {
-      const header = document.querySelector('header')!.getBoundingClientRect()
-      const nav = document.querySelector('header nav')!.getBoundingClientRect()
-      const star = document.querySelector('header button[aria-pressed]')!
-      return { navRightGap: header.right - nav.right, navLeft: nav.left - header.left, width: header.width, starText: (star.textContent ?? '').trim() }
-    })
-    assert(placement.navRightGap < 24 && placement.navLeft > placement.width / 2, `my tabs … help are not at the right end (${JSON.stringify(placement)})`)
-    assert(placement.starText === '', 'the star button still has a label')
+    assert(layout.titleOffCentre < 12, `the song title is not centred (${layout.titleOffCentre}px off)`)
+    assert(layout.actionsUnder, 'the star and edit buttons are not under the song title')
+    assert(layout.navRightGap < 24 && layout.navLeft > layout.width / 2, `my tabs … help are not at the right end (${JSON.stringify(layout)})`)
+    assert(layout.starText === '', 'the star button still has a label')
     assert((await header.getByRole('button', { name: /Guitar|乐器/ }).count()) === 0, 'the instrument button is still in the top bar')
   })
   await check('a switched-on control keeps its colour under the mouse; icons are 24px', async () => {
@@ -339,6 +354,58 @@ async function main() {
     await page.keyboard.press('ArrowLeft')
     await page.waitForTimeout(400)
     assert((await cursorPosition(page)) === one, 'ArrowLeft did not go back one bar')
+  })
+  await check('the note-name box shows the solfège at the cursor, in the key of the tab or one picked by hand', async () => {
+    const box = page.locator('footer').getByRole('button', { name: '唱名' })
+    const names = async () => (await box.getByRole('status').innerText()).trim()
+    const key = async () => (await box.innerText()).split('\n')[0].trim()
+    // Worked out here from the score itself: movable do from the key signature (or the given tonic), lowest note first.
+    const expected = (bar: number, tonicOverride: number | null = null) =>
+      page.evaluate(
+        ([barIndex, override]) => {
+          const player = (window as unknown as { __tabsPlayer: { getSnapshot(): { trackIndex: number }; api: { score: { tracks: Array<{ staves: Array<{ bars: Array<{ keySignature: number; voices: Array<{ beats: Array<{ notes: Array<{ realValue: number; isDead: boolean }> }> }> }> }> }> } } } }).__tabsPlayer
+          const bar = player.api.score.tracks[player.getSnapshot().trackIndex].staves[0].bars[barIndex!]
+          const syllables = ['do', '#do', 're', '♭mi', 'mi', 'fa', '#fa', 'sol', '#sol', 'la', '♭si', 'si']
+          const tonic = override ?? (((bar.keySignature * 7) % 12) + 12) % 12
+          const pitches = bar.voices[0].beats[0].notes.filter((note) => !note.isDead).map((note) => note.realValue).sort((a, b) => a - b)
+          return pitches.map((pitch) => syllables[(((pitch - tonic) % 12) + 12) % 12]).join(' ')
+        },
+        [bar, tonicOverride] as const,
+      )
+    // Put the position back afterwards: later checks read the tempo where the cursor is.
+    type Tick = { __tabsPlayer: { api: { tickPosition: number } } }
+    const startedAt = await page.evaluate(() => (window as unknown as Tick).__tabsPlayer.api.tickPosition)
+    await page.keyboard.press('Home')
+    await page.waitForTimeout(400)
+    // A rest shows nothing; only the key is written above the names.
+    assert(/^1=[#♭]?[A-G]$/.test(await key()), `the box's key reads "${await key()}"`)
+    assert((await names()) === (await expected(0)), `at the start the box shows "${await names()}" (expected "${await expected(0)}")`)
+    for (let i = 0; i < 4; i++) await page.keyboard.press('ArrowRight')
+    await page.waitForTimeout(500)
+    const fifthBar = await expected(4)
+    assert(fifthBar && (await names()) === fifthBar, `in bar 5 the box shows "${await names()}" (expected ${fifthBar})`)
+
+    // Picked by hand: G major, so G is do. Kept with the song.
+    await box.click()
+    const menu = page.getByRole('dialog', { name: '唱名的调' })
+    await menu.waitFor()
+    await shot(page, '03b-key-menu')
+    await menu.getByRole('button', { name: '1=G', exact: true }).click()
+    await menu.waitFor({ state: 'hidden' })
+    await page.waitForTimeout(300)
+    assert((await key()) === '1=G手动' || (await key()).startsWith('1=G'), `the key reads "${await key()}" after picking G`)
+    assert((await names()) === (await expected(4, 7)), `in G the box shows "${await names()}" (expected ${await expected(4, 7)})`)
+    await page.waitForTimeout(1200)
+    const saved = (await (await fetch(`http://127.0.0.1:${API_PORT}/api/songs`)).json()) as Array<{ settings: { key?: number | null } }>
+    assert(saved[0]?.settings.key === 1, `the picked key was saved as ${JSON.stringify(saved[0]?.settings.key)}`)
+    // And back to the tab's own key.
+    await box.click()
+    await menu.getByRole('button', { name: /^跟随谱子/ }).click()
+    await page.waitForTimeout(300)
+    assert((await names()) === fifthBar, 'following the tab again did not bring its key back')
+
+    await page.evaluate((tick) => ((window as unknown as Tick).__tabsPlayer.api.tickPosition = tick), startedAt)
+    await page.waitForTimeout(300)
   })
   await check('speed popover and +/- keys change the speed', async () => {
     await control(page, '速度').click()
@@ -499,9 +566,15 @@ async function main() {
     await page.waitForTimeout(1200)
     await dialog.getByRole('button', { name: '停止' }).click()
     await dialog.getByText('已停止').waitFor()
-    // The song is 86 bpm in 4/4 and the practice speed is 50%.
+    // The song's tempo where the cursor is (Songsterr edits it now and then: 86 bpm once, 87 since) at the
+    // practice speed of 50%, in 4/4.
+    const songTempo = await page.evaluate(() => {
+      const api = (window as unknown as { __tabsPlayer: { api: { tickPosition: number; tickCache: { masterBars: Array<{ start: number; end: number; tempo: number }> } } } }).__tabsPlayer.api
+      return api.tickCache.masterBars.find((bar) => api.tickPosition >= bar.start && api.tickPosition < bar.end)!.tempo
+    })
     await dialog.getByRole('button', { name: '取当前曲速' }).click()
-    assert((await state()) === JSON.stringify({ bpm: 43, numerator: 4, denominator: 4, running: false }), `unexpected state ${await state()}`)
+    const tempo = JSON.parse(await state()) as { bpm: number; numerator: number; denominator: number; running: boolean }
+    assert(Math.abs(tempo.bpm - songTempo * 0.5) <= 0.5 && tempo.numerator === 4 && tempo.denominator === 4 && !tempo.running, `unexpected state ${await state()} (song tempo ${songTempo})`)
     await page.keyboard.press('Escape')
     assert(await pressed(page, '节拍器'), 'the button should still be lit by the click that follows the song')
   })
@@ -701,7 +774,14 @@ async function main() {
     await editor.getByLabel('名称（可选）').fill('My Bass')
     await editor.getByLabel('调弦').selectOption('Drop D')
     assert(await editor.getByLabel('调整指法（保持音高，重新排品）').isChecked(), 'adjust fingerings should default to on')
+    // The picker opens where the track's instrument is: category, then kind, then the sounds of that kind.
+    assert((await editor.getByRole('tablist', { name: '乐器大类' }).getByRole('tab', { selected: true }).innerText()) === '吉他', 'the bass should open under 吉他')
+    assert((await editor.getByRole('tablist', { name: '乐器小类' }).getByRole('tab', { selected: true }).innerText()) === '贝斯', 'the bass should open under 贝斯')
+    assert((await editor.getByRole('tablist', { name: '乐器大类' }).getByRole('tab').count()) === 6, 'there should be six categories')
     await editor.getByRole('button', { name: '无品贝斯' }).click()
+    // Trying an instrument the song does not use yet (it used to stay silent until applied).
+    await editor.getByRole('button', { name: '试听' }).click()
+    await page.waitForTimeout(1200)
     assert((await editor.getByRole('button', { name: 'Fretless Bass' }).count()) === 0, 'instrument names are not translated')
     await shot(page, '15-track-editor')
     await editor.getByRole('button', { name: '应用' }).click()
@@ -729,8 +809,156 @@ async function main() {
     assert(restored.name === before.name && restored.frets === before.frets, 'restore did not bring back the original track')
     await page.keyboard.press('Escape')
   })
+  await check('tone library: make a tone, give it to a track, keep it with the song, delete it', async () => {
+    // The count-in (switched on by an earlier check) would keep the song silent for the first seconds.
+    type CountIn = { __tabsPlayer: { setCountIn(on: boolean): void; getSnapshot(): { countIn: boolean } } }
+    const countIn = await page.evaluate(() => (window as unknown as CountIn).__tabsPlayer.getSnapshot().countIn)
+    await page.evaluate(() => (window as unknown as CountIn).__tabsPlayer.setCountIn(false))
+    // And the reload in it starts the song over; later checks expect the cursor inside the loop range again.
+    type Position = { __tabsPlayer: { api: { tickPosition: number } } }
+    const position = await page.evaluate(() => (window as unknown as Position).__tabsPlayer.api.tickPosition)
+    try {
+      await guitarTones()
+    } finally {
+      await page.evaluate((on) => (window as unknown as CountIn).__tabsPlayer.setCountIn(on), countIn)
+      await page.evaluate((tick) => ((window as unknown as Position).__tabsPlayer.api.tickPosition = tick), position)
+      // A failure must not leave a dialog or the tone page over the song for the checks after this one.
+      for (const name of ['编辑音轨', '乐器与混音']) if (await page.getByRole('dialog', { name }).isVisible()) await page.keyboard.press('Escape')
+      if (page.url().endsWith('#/tones')) await page.goBack()
+    }
+  })
+  async function guitarTones() {
+    type Amp = { __tabsPlayer: { guitarAmpLevel(): number; playPause(): void; getSnapshot(): { playing: boolean; trackIndex: number; tracks: Array<{ index: number; name: string; program: number }>; trackTones: Record<string, string> } } }
+    const ampLevel = () => page.evaluate(() => (window as unknown as Amp).__tabsPlayer.guitarAmpLevel())
+    // Plays a moment and reads the amp level while it plays (the tone page covers the score, not the player).
+    const levelWhilePlaying = async () => {
+      await page.evaluate(() => (window as unknown as Amp).__tabsPlayer.playPause())
+      await page.waitForFunction(() => (window as unknown as Amp).__tabsPlayer.getSnapshot().playing, undefined, { timeout: 15_000 })
+      await page.waitForTimeout(1500)
+      const level = await ampLevel()
+      await page.evaluate(() => (window as unknown as Amp).__tabsPlayer.playPause())
+      await page.waitForTimeout(400)
+      return level
+    }
+    // Its own page, from the switch at the left of the top bar; the song stays loaded underneath.
+    const openDialog = async () => {
+      await page.locator('header').getByRole('link', { name: '吉他音色编辑' }).click()
+      const dialog = page.getByRole('region', { name: '吉他音色编辑' })
+      await dialog.waitFor()
+      assert(page.url().endsWith('#/tones'), `the tone page is at ${page.url()}`)
+      assert((await page.locator('header').getByRole('link', { name: '吉他音色编辑' }).getAttribute('aria-current')) === 'page', 'the switch should show the tone page as current')
+      return dialog
+    }
+    // And back to the song by its title, without loading it again.
+    const backToSong = async () => {
+      await page.locator('header').getByTitle('回到曲谱').click()
+      await page.getByRole('region', { name: '吉他音色编辑' }).waitFor({ state: 'detached' })
+      assert(/#\/song\/\d+$/.test(page.url()), `back at ${page.url()}`)
+    }
+    // A clean electric guitar track (the rhythm guitar), in the track editor; earlier checks may show another.
+    const shown = await page.evaluate(() => (window as unknown as Amp).__tabsPlayer.getSnapshot().tracks.find((track) => track.program === 27)!)
+    const openTrackEditor = async () => {
+      await control(page, '乐器').click()
+      await page.getByRole('dialog', { name: '乐器与混音' }).getByRole('button', { name: `编辑 ${shown.name}` }).click()
+      const editor = page.getByRole('dialog', { name: '编辑音轨' })
+      await editor.waitFor()
+      return editor
+    }
+
+    // No tone given: the track plays the samples, nothing goes through an amp.
+    const before = await levelWhilePlaying()
+    assert(before < 0.0005, `a track without a tone reaches an amp (level ${before})`)
+
+    // A tone of my own in the library, from the distortion template with more gain and a delay switched on.
+    let dialog = await openDialog()
+    const list = dialog.getByRole('navigation', { name: '音色库' })
+    assert((await list.getByRole('button').count()) === 4, 'the library should list the three templates and Flying Cloud')
+    await list.getByRole('button', { name: /^失真/ }).click()
+    await shot(page, '17-guitar-tones')
+    const chain = dialog.getByRole('tablist', { name: '信号链' })
+    assert((await chain.getByRole('tab').count()) === 9, 'the signal chain should have nine modules')
+    await chain.getByRole('tab', { name: '箱头' }).click()
+    await dialog.getByRole('slider', { name: '增益' }).fill('95')
+    assert(await dialog.getByText(/模板不能直接改/).isVisible(), 'changing a template should ask to save it as a new tone')
+    await chain.getByRole('button', { name: '开关延迟' }).click()
+    assert((await chain.getByRole('button', { name: '开关延迟' }).getAttribute('aria-pressed')) === 'true', 'the delay did not switch on')
+    await chain.getByRole('tab', { name: '延迟' }).click()
+    await dialog.getByLabel('类型').selectOption('analog')
+    await dialog.getByRole('slider', { name: '混合' }).fill('80')
+    await dialog.getByRole('slider', { name: '反馈' }).fill('70')
+    await shot(page, '17b-signal-chain')
+    await dialog.getByRole('button', { name: '另存为…' }).click()
+    await dialog.getByRole('textbox', { name: '音色名称' }).fill('My lead')
+    await dialog.getByRole('button', { name: '确定' }).click()
+    await page.waitForTimeout(300)
+    type Stored = { custom: Array<{ id: string; name: string; family: string; chain: { amp: { params: { gain: number } }; delay: { on: boolean; type: string } } }> }
+    const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('tabs.guitarTones') ?? 'null') as Stored)
+    const saved = stored?.custom.find((tone) => tone.name === 'My lead')
+    assert(saved && saved.family === 'guitar' && saved.chain.amp.params.gain === 95 && saved.chain.delay.on && saved.chain.delay.type === 'analog', `the tone was not saved with its chain: ${JSON.stringify(saved)}`)
+    assert((await list.getByRole('button', { name: 'My lead' }).getAttribute('aria-current')) === 'true', 'the new tone should be the one picked')
+    // Trying it out plays the scale sample through the tone, over and over until stopped.
+    await dialog.getByRole('button', { name: '试听' }).click()
+    await page.waitForTimeout(1200)
+    const sampleLevel = await ampLevel()
+    assert(sampleLevel > 0.001, `the sample does not reach the tone (level ${sampleLevel})`)
+    await dialog.getByRole('button', { name: '停止试听' }).click()
+    await dialog.getByRole('button', { name: '试听' }).waitFor()
+    await page.waitForTimeout(1500)
+    const stopped = await ampLevel()
+    assert(stopped < sampleLevel / 4, `the sample keeps playing after stopping (level ${stopped})`)
+
+    // Given to the track in its editor: the clean parts of this rhythm guitar now go through it.
+    await backToSong()
+    let editor = await openTrackEditor()
+    await editor.getByRole('tab', { name: '吉他', exact: true }).click()
+    await editor.getByRole('tab', { name: '电吉他', exact: true }).click()
+    const inList = editor.getByRole('list', { name: '乐器' }).getByRole('button', { name: 'My lead' })
+    await inList.click()
+    assert((await inList.getAttribute('aria-pressed')) === 'true', 'the tone picked among the instruments is not shown as picked')
+    await editor.getByRole('button', { name: '应用' }).click()
+    await editor.waitFor({ state: 'hidden' })
+    await page.keyboard.press('Escape')
+    const given = await levelWhilePlaying()
+    assert(given > 0.001, `the track with a tone does not reach its amp (level ${given})`)
+    // The delay keeps sounding after the guitar stops: its repeats still come out of the chain.
+    await page.evaluate(() => (window as unknown as Amp).__tabsPlayer.playPause())
+    await page.waitForFunction(() => (window as unknown as Amp).__tabsPlayer.getSnapshot().playing, undefined, { timeout: 15_000 })
+    await page.waitForTimeout(1500)
+    await page.evaluate(() => (window as unknown as Amp).__tabsPlayer.playPause())
+    await page.waitForTimeout(250)
+    const tail = await ampLevel()
+    assert(tail > 0.0003, `no delay repeats after stopping (level ${tail})`)
+
+    // Kept with the song: after a reload the track still has it.
+    await page.waitForTimeout(800)
+    await page.reload()
+    await waitReady(page)
+    const reloaded = await page.evaluate(() => (window as unknown as Amp).__tabsPlayer.getSnapshot().trackTones)
+    assert(reloaded[shown.index] === saved.id, `the tone given to the track was not kept: ${JSON.stringify(reloaded)}`)
+    editor = await openTrackEditor()
+    assert(
+      (await editor.getByRole('list', { name: '乐器' }).getByRole('button', { name: 'My lead' }).getAttribute('aria-pressed')) === 'true',
+      'the track editor should show the tone given',
+    )
+    // The close button in the corner (the footer has a "取消" too).
+    await editor.getByRole('button', { name: '取消' }).first().click()
+    await editor.waitFor({ state: 'hidden' })
+    await page.keyboard.press('Escape')
+
+    // Deleted from the library: the track plays the samples again.
+    dialog = await openDialog()
+    await dialog.getByRole('navigation', { name: '音色库' }).getByRole('button', { name: 'My lead' }).click()
+    await dialog.getByRole('button', { name: '删除' }).click()
+    await page.waitForTimeout(300)
+    assert((await dialog.getByRole('navigation', { name: '音色库' }).getByRole('button', { name: 'My lead' }).count()) === 0, 'the tone is still listed')
+    await backToSong()
+    const after = await levelWhilePlaying()
+    assert(after < 0.0005, `after deleting the tone the track still reaches an amp (level ${after})`)
+    await page.waitForTimeout(300)
+    assert((await page.locator('main').getAttribute('data-status')) === 'ready', 'the song should still be ready after the tone page')
+  }
   await check('the top bar panels stay inside the window', async () => {
-    for (const name of ['我的曲谱', '新建', '搜索曲谱', '帮助']) {
+    for (const name of ['我的曲谱', '新建曲谱', '搜索曲谱', '帮助']) {
       await page.locator('header').getByRole('button', { name, exact: true }).click()
       const box = await page.getByRole('dialog', { name }).boundingBox()
       const width = await page.evaluate(() => document.documentElement.clientWidth)
@@ -829,6 +1057,7 @@ async function main() {
     })
     await page.getByRole('dialog', { name: '乐器与混音' }).getByRole('button', { name: `编辑 ${trackName}` }).click()
     const trackDialog = page.getByRole('dialog', { name: '编辑音轨' })
+    await trackDialog.getByRole('tab', { name: '键盘乐' }).click()
     await trackDialog.getByRole('tab', { name: '钢琴' }).click()
     await trackDialog.getByRole('button', { name: '原声大钢琴', exact: true }).click()
     await trackDialog.getByRole('button', { name: '应用' }).click()
@@ -924,7 +1153,7 @@ async function main() {
         original(tracks, solo)
       }
     })
-    await page.getByRole('button', { name: '新建' }).click()
+    await page.getByRole('button', { name: '新建曲谱' }).click()
     await page.getByLabel('曲谱文件').setInputFiles(exported.path)
     await page.waitForFunction((previous) => window.location.hash !== previous, new URL(page.url()).hash, { timeout: 20_000 })
     await waitReady(page)
@@ -955,6 +1184,27 @@ async function main() {
     await page.getByRole('heading', { name: '我的曲谱' }).waitFor()
     assert((await page.locator('main li').count()) === 2, 'expected two songs in the library')
     await shot(page, '09-library')
+  })
+  // In a browser of its own with the usual autoplay policy (the rest of this run lets pages play sound without a
+  // click), freshly opened on the tone page: no song was ever loaded and the audio output starts suspended.
+  await check('the tone page plays its sample in a fresh page, with no song and the usual autoplay policy', async () => {
+    const plain = await chromium.launch({ channel: 'msedge' })
+    try {
+      const fresh = await plain.newPage({ locale: 'zh-CN' })
+      fresh.setDefaultTimeout(12_000)
+      await fresh.goto(`${BASE}/#/tones`)
+      const tones = fresh.getByRole('region', { name: '吉他音色编辑' })
+      const tryIt = tones.getByRole('button', { name: '试听' })
+      // The sound font takes a moment.
+      await fresh.waitForFunction(() => (window as unknown as { __tabsPlayer: { getSnapshot(): { canPreview: boolean } } }).__tabsPlayer.getSnapshot().canPreview, undefined, { timeout: 30_000 })
+      await tryIt.click()
+      await fresh.waitForTimeout(1500)
+      const level = await fresh.evaluate(() => (window as unknown as { __tabsPlayer: { guitarAmpLevel(): number } }).__tabsPlayer.guitarAmpLevel())
+      assert(level > 0.001, `no sound from the sample in a fresh page (level ${level})`)
+      await tones.getByRole('button', { name: '停止试听' }).click()
+    } finally {
+      await plain.close()
+    }
   })
   await check('revision history lists revisions for a Songsterr song', async () => {
     await page.locator('main li').filter({ hasNotText: '本地文件' }).getByRole('button').first().click()

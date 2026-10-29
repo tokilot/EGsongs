@@ -1,15 +1,134 @@
-/* One row, always visible. It may tighten its gaps but never wraps. */
+/* The buttons stay centred; the side columns (the note-name box on the left) give way first when the window
+   gets narrow. */
 .controlBar {
-  display: flex;
-  flex-wrap: nowrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, max-content) minmax(0, 1fr);
   align-items: center;
-  justify-content: center;
   gap: clamp(2px, 1vw, 12px);
   height: var(--controlbar-height);
   padding: 0 12px;
   background: var(--surface);
   border-top: 1px solid var(--border);
   min-width: 0;
+}
+
+/* One row, always visible. It may tighten its gaps but never wraps. */
+.buttons {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(2px, 1vw, 12px);
+  min-width: 0;
+}
+
+/* Not overflow: hidden, the key menu opens out of here. Too narrow for the box, it is left out. */
+.side {
+  display: flex;
+  min-width: 0;
+  container-type: inline-size;
+}
+
+@container (max-width: 90px) {
+  .noteNames {
+    display: none;
+  }
+}
+
+.noteNames {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 3px;
+  box-sizing: border-box;
+  width: 240px;
+  max-width: 100cqw;
+  min-width: 0;
+  height: var(--control-size);
+  padding: 0 12px;
+  overflow: hidden;
+  background: var(--surface-raised);
+  border: none;
+  border-radius: var(--radius);
+  color: var(--text);
+  text-align: left;
+}
+
+.noteNames:hover {
+  background: var(--border);
+}
+
+.noteNamesKey {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--accent);
+}
+
+.noteNamesManual {
+  padding: 1px 5px;
+  background: var(--accent);
+  border-radius: 6px;
+  color: var(--accent-text);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.noteNamesText {
+  max-width: 100%;
+  min-height: 1.2em;
+  overflow: hidden;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.keyPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 260px;
+}
+
+.keyPanel button {
+  height: 30px;
+  background: var(--surface-raised);
+  border: none;
+  border-radius: 7px;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.keyPanel button:hover {
+  background: var(--border);
+}
+
+.keyPanel button[aria-pressed='true'],
+.keyPanel button[aria-pressed='true']:hover {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.keyFollow {
+  width: 100%;
+}
+
+.keyHint {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.keyGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
 }
 
 .control {

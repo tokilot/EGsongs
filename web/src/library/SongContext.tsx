@@ -4,6 +4,7 @@ import type { PracticeSettings, Song } from '../api/client.ts'
 import { usePlayer } from '../player/usePlayer.ts'
 import { translate } from '../ui/i18n.ts'
 import { SongContext, type SongContextValue } from './useSong.ts'
+import { TONES_HASH } from './useView.ts'
 
 const SAVE_DELAY_MS = 500
 
@@ -22,6 +23,8 @@ export function SongProvider({ children }: { children: ReactNode }) {
   // Guards against an older, slower request finishing after a newer one.
   const requestId = useRef(0)
   const lastSaved = useRef('')
+  // The song in the player, by id: going to the tone editor and back keeps it as it is.
+  const loadedId = useRef<number | null>(null)
 
   const load = useCallback(
     async (id: number) => {
@@ -39,11 +42,13 @@ export function SongProvider({ children }: { children: ReactNode }) {
             : ({ kind: 'file', bytes: await api.getSongFile(id) } as const)
         if (request !== requestId.current) return
         lastSaved.current = ''
+        loadedId.current = id
         setSong(opened)
         player.load(source, practice)
         libraryChanged()
       } catch (cause) {
         if (request !== requestId.current) return
+        loadedId.current = null
         setSong(null)
         player.clear()
         setError((cause as Error).message)
@@ -59,15 +64,20 @@ export function SongProvider({ children }: { children: ReactNode }) {
   const shownHash = useRef(window.location.hash)
   useEffect(() => {
     const sync = () => {
-      if (window.location.hash !== shownHash.current && player.editDirty && !window.confirm(translate('曲谱有未保存的修改，确定放弃并离开吗？'))) {
+      const hash = window.location.hash
+      const id = songIdFromHash()
+      // The tone editor keeps the open song, and coming back to that song from it needs no reload.
+      const keepsSong = hash === TONES_HASH || (id !== null && id === loadedId.current && shownHash.current === TONES_HASH)
+      if (hash !== shownHash.current && !keepsSong && player.editDirty && !window.confirm(translate('曲谱有未保存的修改，确定放弃并离开吗？'))) {
         history.replaceState(null, '', shownHash.current || '#/')
         return
       }
-      shownHash.current = window.location.hash
-      const id = songIdFromHash()
+      shownHash.current = hash
+      if (keepsSong) return
       if (id !== null) void load(id)
       else {
         requestId.current++
+        loadedId.current = null
         setOpening(false)
         setSong(null)
         setError(null)
@@ -112,8 +122,10 @@ export function SongProvider({ children }: { children: ReactNode }) {
       metronome: state.metronome,
       transpose: state.transpose,
       trackEdits: state.trackEdits,
+      trackTones: state.trackTones,
+      key: state.manualKey,
     }),
-    [state.speed, state.trackIndex, state.looping, state.range, state.countIn, state.metronome, state.transpose, state.trackEdits],
+    [state.speed, state.trackIndex, state.looping, state.range, state.countIn, state.metronome, state.transpose, state.trackEdits, state.manualKey, state.trackTones],
   )
   const songId = song?.id
   const ready = state.status === 'ready'

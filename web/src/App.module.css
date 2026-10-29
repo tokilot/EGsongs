@@ -5,3 +5,17 @@
   height: 100%;
   min-width: 0;
 }
+
+/* Placed by row, so the tone editor page can share the score area's cell (it lies on top of it). */
+.app > header {
+  grid-row: 1;
+}
+
+.app > main {
+  grid-row: 2;
+  grid-column: 1;
+}
+
+.app > footer {
+  grid-row: 3;
+}

@@ -1,0 +1,258 @@
+/* The tone dialog takes its frame, buttons and fields from TrackEditor.module.css; these are its own parts. */
+
+/* The page covers the score area (same grid cell, see App.module.css) and scrolls on its own; the score stays
+   laid out underneath, so the open song keeps playing and nothing has to be drawn again on the way back. */
+.page {
+  position: relative;
+  z-index: 1;
+  grid-row: 2;
+  grid-column: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--bg, var(--surface));
+}
+
+/* Wide enough for the tone list and the nine modules of the chain in one row. */
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: min(1000px, calc(100% - 32px));
+  margin: 24px auto 40px;
+}
+
+.pageHeader h1 {
+  margin: 0 0 4px;
+  font-size: 22px;
+}
+
+.toneRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.toneRow > label {
+  flex: 1;
+  min-width: 140px;
+}
+
+/* The signal chain: nine blocks in signal order, joined by a line. */
+.chain {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(9, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.chain::before {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  left: 8px;
+  height: 2px;
+  background: var(--border);
+  content: '';
+}
+
+.block {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  /* Off: the plain surface, so it stands apart from the section around it. */
+  background: var(--surface);
+  border: 2px solid transparent;
+  border-radius: 9px;
+  color: var(--text-muted);
+}
+
+.block[data-on] {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.block[data-selected] {
+  border-color: var(--text);
+}
+
+.blockMain {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 2px 4px;
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.blockPower {
+  display: flex;
+  justify-content: center;
+  padding: 2px 0 5px;
+  background: none;
+  border: none;
+  color: inherit;
+  opacity: 0.75;
+}
+
+.blockPower:hover {
+  opacity: 1;
+}
+
+.modulePanel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.moduleHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+}
+
+.typeField {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  font-size: 13px;
+}
+
+.knobs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 24px;
+}
+
+/* The knobs of a module that is off can still be set, but look it. */
+.knobs[data-off] {
+  opacity: 0.5;
+}
+
+.knob {
+  display: grid;
+  grid-template-columns: 60px 1fr 64px;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.knob input {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.knob output {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.naming {
+  display: flex;
+  gap: 8px;
+}
+
+.naming input {
+  flex: 1;
+}
+
+/* Fields as in the dialogs (TrackEditor.module.css styles them under its .dialog only). */
+.content input[type='text'],
+.content select {
+  height: 32px;
+  padding: 0 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 14px;
+}
+
+/* The library: the tones on the left, the picked one's chain on the right. */
+.libraryLayout {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.toneList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.toneGroup h3 {
+  margin: 0 0 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.toneGroup ul {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.toneGroup button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  background: none;
+  border: none;
+  border-radius: 7px;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+}
+
+.toneGroup button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toneGroup button:hover {
+  background: var(--surface-raised);
+}
+
+.toneGroup button[aria-current='true'] {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.toneGroup small {
+  flex: none;
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+.toneTitle {
+  flex: 1;
+  margin: 0;
+  font-size: 17px;
+}
