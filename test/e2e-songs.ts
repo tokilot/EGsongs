@@ -21,13 +21,13 @@ const shots = args.includes('--shots')
 const only = new Set(args.filter((arg) => /^\d+$/.test(arg)).map(Number))
 const shotDir = path.join(root, 'test', 'shots')
 
-const cache = path.join(root, 'data/songsterr')
+const cache = path.join(root, 'data/songs')
 if (!FIXTURES.every((fixture) => existsSync(path.join(cache, String(fixture.songId), String(fixture.revisionId), 'meta.json')))) {
   console.error('Songsterr fixtures are missing; run `npm run fixtures` first.')
   process.exit(1)
 }
 const dataDir = mkdtempSync(path.join(tmpdir(), 'tabs-songs-'))
-cpSync(cache, path.join(dataDir, 'songsterr'), { recursive: true })
+cpSync(cache, path.join(dataDir, 'songs'), { recursive: true })
 
 const children: ChildProcess[] = []
 function start(command: string, commandArgs: string[], cwd: string, env: Record<string, string>) {

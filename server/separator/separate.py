@@ -1,11 +1,12 @@
-"""Splits a recording into six stems with BS-RoFormer SW (python-audio-separator); run by server/src/stems.ts.
+"""Splits a recording into stems with a RoFormer model (python-audio-separator); run by server/src/stems.ts.
 
-Usage: python -I separate.py <input.wav> <output dir> <model dir> [cuda|cpu]
+Usage: python -I separate.py <input.wav> <output dir> <model dir> [cuda|cpu] [checkpoint] [config]
        python -I separate.py --devices
 
-Prints one JSON object per line on stdout: {"device": "cuda"} first, {"progress": 0.42} while it works, then
-{"stems": [{"name": "guitar", "file": "guitar.flac", "rmsDb": -18.2}, ...]}. Logs and errors go to stderr; a
-failure exits with code 1. With --devices it prints the graphics cards PyTorch can use instead.
+The checkpoint and config are file names in the model directory (BS-RoFormer SW by default; the server's
+MODELS list says which). Prints one JSON object per line on stdout: {"device": "cuda"} first, {"progress": 0.42}
+while it works, then {"stems": [{"name": "guitar", "file": "guitar.flac", "rmsDb": -18.2}, ...]}. Logs and errors
+go to stderr; a failure exits with code 1. With --devices it prints the graphics cards PyTorch can use instead.
 """
 
 import json
@@ -16,7 +17,7 @@ import sys
 
 MODEL = "BS-Roformer-SW.ckpt"
 CONFIG = "BS-Roformer-SW.yaml"
-# The model's own stem names (training.instruments in the YAML), in the order the page lists them.
+# The stem names the models use (training.instruments in their YAML), in the order the page lists them.
 STEMS = ["vocals", "drums", "bass", "guitar", "piano", "other"]
 
 
@@ -72,7 +73,10 @@ def devices():
 
 def main():
     input_path, output_dir, model_dir = sys.argv[1:4]
-    if len(sys.argv) > 4 and sys.argv[4] == "cpu":
+    device = sys.argv[4] if len(sys.argv) > 4 else "cuda"
+    model = sys.argv[5] if len(sys.argv) > 5 else MODEL
+    config = sys.argv[6] if len(sys.argv) > 6 else CONFIG
+    if device == "cpu":
         # Hidden before PyTorch loads, so that it (and the separator) cannot see the graphics card. An empty value
         # does not hide it (PyTorch 2.15); -1 does.
         os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
@@ -101,11 +105,11 @@ def main():
     separator.download_model_files = lambda filename: (
         filename,
         "MDXC",
-        "BS-RoFormer SW",
-        os.path.join(model_dir, MODEL),
-        os.path.join(model_dir, CONFIG),
+        filename,
+        os.path.join(model_dir, model),
+        os.path.join(model_dir, config),
     )
-    separator.load_model(MODEL)
+    separator.load_model(model)
     separator.separate(input_path, {name: name for name in STEMS})
 
     stems = []

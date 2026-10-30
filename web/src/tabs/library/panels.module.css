@@ -1,0 +1,148 @@
+/* The two top bar panels of the tabs: search (library and online) and new tab (import or blank). */
+
+.results,
+.newSong {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 320px;
+}
+
+.results h2,
+.newSong h2 {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.title,
+.artist {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.title {
+  font-weight: 600;
+}
+
+.artist {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.artist a {
+  margin-left: 4px;
+  color: inherit;
+  vertical-align: middle;
+}
+
+/* The search field inside the search popover. */
+.search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+}
+
+.search:focus-within {
+  border-color: var(--accent);
+}
+
+.search input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text);
+}
+
+.results ul {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.results li button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  padding: 6px 8px;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  text-align: left;
+  line-height: 1.3;
+}
+
+.results li button:hover:not(:disabled) {
+  background: var(--surface);
+}
+
+.muted,
+.error {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.error {
+  color: var(--danger);
+}
+
+/* The blank tab: title and artist across, then instrument, time signature, tempo and bars two by two. */
+.newSong .blankForm {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.blankForm label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.blankForm .wide {
+  grid-column: 1 / -1;
+}
+
+.blankForm input,
+.blankForm select {
+  min-width: 0;
+  height: 32px;
+  padding: 0 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.newSong form button {
+  height: 32px;
+  padding: 0 14px;
+  background: var(--accent);
+  border: none;
+  border-radius: 8px;
+  color: var(--accent-text);
+}
+
+.newSong form button:disabled {
+  opacity: 0.5;
+}

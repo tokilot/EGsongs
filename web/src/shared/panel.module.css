@@ -1,0 +1,80 @@
+/* Panels, hints and buttons shared by the track editor, the tone page and the stems page. */
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--surface-raised);
+  border-radius: 10px;
+}
+
+.section h3 {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.preview {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.preview:disabled {
+  opacity: 0.5;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hint,
+.message {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.message {
+  color: var(--text);
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.primary,
+.secondary {
+  height: 34px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 8px;
+}
+
+.primary {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.secondary {
+  background: var(--surface-raised);
+}
+
+.secondary:disabled {
+  opacity: 0.45;
+}
