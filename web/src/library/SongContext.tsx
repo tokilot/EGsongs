@@ -4,7 +4,7 @@ import type { PracticeSettings, Song } from '../api/client.ts'
 import { usePlayer } from '../player/usePlayer.ts'
 import { translate } from '../ui/i18n.ts'
 import { SongContext, type SongContextValue } from './useSong.ts'
-import { TONES_HASH } from './useView.ts'
+import { keepsSong as pageKeepsSong } from './useView.ts'
 
 const SAVE_DELAY_MS = 500
 
@@ -66,8 +66,8 @@ export function SongProvider({ children }: { children: ReactNode }) {
     const sync = () => {
       const hash = window.location.hash
       const id = songIdFromHash()
-      // The tone editor keeps the open song, and coming back to that song from it needs no reload.
-      const keepsSong = hash === TONES_HASH || (id !== null && id === loadedId.current && shownHash.current === TONES_HASH)
+      // The tone editor and the stems keep the open song, and coming back to that song from them needs no reload.
+      const keepsSong = pageKeepsSong(hash) || (id !== null && id === loadedId.current && pageKeepsSong(shownHash.current))
       if (hash !== shownHash.current && !keepsSong && player.editDirty && !window.confirm(translate('曲谱有未保存的修改，确定放弃并离开吗？'))) {
         history.replaceState(null, '', shownHash.current || '#/')
         return

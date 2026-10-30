@@ -143,3 +143,51 @@ export function getRevisions(id: number): Promise<Revision[]> {
 export function switchRevision(id: number, revisionId: number): Promise<Song> {
   return request(`/api/songs/${id}/revision`, json('POST', { revisionId }))
 }
+
+/** Recordings split into stems, on their own (server/src/stems.ts). */
+export type StemName = 'vocals' | 'drums' | 'bass' | 'guitar' | 'piano' | 'other'
+export type StemDevice = 'cuda' | 'cpu'
+
+export interface StemItem {
+  id: string
+  name: string
+  sourceName: string
+  createdAt: string
+  device: StemDevice | null
+  stems: Array<{ name: StemName; file: string; rmsDb: number }>
+  status: 'queued' | 'running' | 'failed' | 'done'
+  progress: number
+  error: string | null
+}
+
+export interface StemDevices {
+  cpu: { name: string; threads: number }
+  memoryGb: number
+  gpus: Array<{ name: string; memoryGb: number }>
+  torch: string | null
+  cuda: string | null
+  /** Why separating cannot work here at all, or null. */
+  problem: string | null
+}
+
+export function listStems(): Promise<StemItem[]> {
+  return request('/api/stems')
+}
+
+export function getStemDevices(): Promise<StemDevices> {
+  return request('/api/stems/devices')
+}
+
+/** Starts separating a recording, already decoded to WAV. */
+export function separateStems(sourceName: string, wav: Blob, device: StemDevice): Promise<StemItem> {
+  return request(`/api/stems?name=${encodeURIComponent(sourceName)}&device=${device}`, { method: 'POST', body: wav })
+}
+
+/** Deletes a separation, or stops it while it is still under way. */
+export function deleteStems(id: string): Promise<{ ok: boolean }> {
+  return request(`/api/stems/${id}`, { method: 'DELETE' })
+}
+
+export function stemUrl(id: string, name: StemName): string {
+  return `/api/stems/${id}/${name}`
+}

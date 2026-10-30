@@ -1,17 +1,25 @@
+import { open, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { Hono } from 'hono'
 import type { Context } from 'hono'
 import { Library, type Song } from './db/library.ts'
 import { parseSongId, SongsterrClient, SongsterrError, songUrl, type SongsterrMeta } from './songsterr/client.ts'
+import { pythonRunner, StemError, StemStore, type SeparationRunner } from './stems.ts'
 
 export interface AppOptions {
-  /** Holds library.db, tabs/ and songsterr/. */
+  /** Holds library.db, tabs/, songsterr/ and stems/. */
   dataDir: string
   fetch?: typeof fetch
   songsterrIntervalMs?: number
+  /** Splits recordings into stems; by default the Python script, run by TABS_PYTHON with the model in TABS_SEPARATOR_MODELS. */
+  separator?: SeparationRunner
 }
 
 const MAX_UPLOAD_BYTES = 30 * 1024 * 1024
+// A recording, decoded to 16-bit WAV by the page: about 10 MB a minute.
+const MAX_RECORDING_BYTES = 400 * 1024 * 1024
+// The Python environment next to the repository (E:\Code\.venv), which has audio-separator and PyTorch.
+const DEFAULT_PYTHON = path.resolve(import.meta.dirname, '../../../.venv/Scripts/python.exe')
 
 export function createApp(options: AppOptions) {
   const library = new Library(options.dataDir)
@@ -20,10 +28,16 @@ export function createApp(options: AppOptions) {
     fetch: options.fetch,
     minIntervalMs: options.songsterrIntervalMs,
   })
+  const stems = new StemStore(
+    options.dataDir,
+    options.separator ??
+      pythonRunner(process.env.TABS_PYTHON ?? DEFAULT_PYTHON, process.env.TABS_SEPARATOR_MODELS ?? path.join(options.dataDir, 'models', 'separator')),
+  )
   const app = new Hono()
 
   app.onError((error, c) => {
     if (error instanceof SongsterrError) return c.json({ error: error.message }, error.status as 403 | 404 | 502)
+    if (error instanceof StemError) return c.json({ error: error.message }, error.status)
     console.error(error)
     return c.json({ error: 'Internal server error.' }, 500)
   })
@@ -121,6 +135,53 @@ export function createApp(options: AppOptions) {
     return c.json({ tracks: await songsterr.getAllTracks(meta) })
   })
 
+  // Stems: recordings split into vocals, drums, bass, guitar, piano and other (see stems.ts), on their own,
+  // not tied to a song.
+  app.get('/api/stems', async (c) => c.json(await stems.list()))
+
+  app.get('/api/stems/devices', async (c) => c.json(await stems.devices()))
+
+  app.post('/api/stems', async (c) => {
+    const bytes = new Uint8Array(await c.req.arrayBuffer())
+    if (bytes.length === 0) return c.json({ error: 'The file is empty.' }, 400)
+    if (bytes.length > MAX_RECORDING_BYTES) return c.json({ error: 'The recording is too long.' }, 413)
+    const device = c.req.query('device') === 'cpu' ? 'cpu' : 'cuda'
+    return c.json(await stems.start(c.req.query('name') ?? '', bytes, device), 202)
+  })
+
+  app.delete('/api/stems/:id', async (c) => {
+    return (await stems.remove(c.req.param('id'))) ? c.json({ ok: true }) : c.json({ error: 'No such separation.' }, 404)
+  })
+
+  // One stem as FLAC. Answers byte ranges, so the page's audio player can seek without loading all of it.
+  app.get('/api/stems/:id/:name', async (c) => {
+    const file = await stems.stemFile(c.req.param('id'), c.req.param('name'))
+    if (!file) return c.json({ error: 'No such stem.' }, 404)
+    const size = (await stat(file)).size
+    const headers: Record<string, string> = { 'Content-Type': 'audio/flac', 'Accept-Ranges': 'bytes' }
+    let start = 0
+    let end = size - 1
+    const range = /^bytes=(\d*)-(\d*)$/.exec(c.req.header('Range') ?? '')
+    if (range && (range[1] || range[2])) {
+      if (range[1]) {
+        start = Number(range[1])
+        if (range[2]) end = Math.min(Number(range[2]), size - 1)
+      } else {
+        start = Math.max(size - Number(range[2]), 0)
+      }
+      if (start > end) return c.body(null, 416, { 'Content-Range': `bytes */${size}` })
+      headers['Content-Range'] = `bytes ${start}-${end}/${size}`
+    }
+    const bytes = new Uint8Array(end - start + 1)
+    const handle = await open(file)
+    try {
+      await handle.read(bytes, 0, bytes.length, start)
+    } finally {
+      await handle.close()
+    }
+    return c.body(bytes.buffer, headers['Content-Range'] ? 206 : 200, headers)
+  })
+
   app.post('/api/songs/upload', async (c) => {
     const name = c.req.query('name') ?? ''
     const bytes = new Uint8Array(await c.req.arrayBuffer())
@@ -182,5 +243,5 @@ export function createApp(options: AppOptions) {
     return c.json(library.setRevision(song.id, metaInput(meta)))
   })
 
-  return { app, library }
+  return { app, library, stems }
 }

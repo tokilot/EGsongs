@@ -264,19 +264,36 @@ a.title:hover {
   color: var(--danger);
 }
 
-.newSong form {
-  display: flex;
-  gap: 6px;
+/* The blank tab: title and artist across, then instrument, time signature, tempo and bars two by two. */
+.newSong .blankForm {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }
 
-.newSong input[type='url'] {
-  flex: 1;
+.blankForm label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.blankForm .wide {
+  grid-column: 1 / -1;
+}
+
+.blankForm input,
+.blankForm select {
   min-width: 0;
   height: 32px;
   padding: 0 8px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
+  color: var(--text);
+  font-size: 13px;
 }
 
 .newSong form button {

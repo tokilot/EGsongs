@@ -62,7 +62,7 @@ export function SongList({ onPick }: SongListProps) {
 
       {error && <p className={styles.message}>{error}</p>}
       {!error && songs?.length === 0 && (
-        <p className={styles.message}>{favoritesOnly ? t('还没有收藏的曲谱。') : t('曲库是空的。在顶栏搜索，或点击“新建”导入曲谱。')}</p>
+        <p className={styles.message}>{favoritesOnly ? t('收藏为空。') : t('曲库为空。')}</p>
       )}
 
       <ul>

@@ -39,13 +39,13 @@ export function useTabEditing() {
 
   /** Closes the editor and throws away what was changed since it was opened. */
   const discard = useCallback(() => {
-    if (player.editDirty && !window.confirm(translate('放弃这次的全部修改吗？'))) return
+    if (player.editDirty && !window.confirm(translate('确认放弃修改吗？'))) return
     player.endEditing(false)
   }, [player])
 
   /** Deletes the saved edits and opens the tab as it was imported. */
   const restoreOriginal = useCallback(async () => {
-    if (!song?.edited || !window.confirm(translate('删除保存过的修改，恢复成导入时的曲谱吗？'))) return
+    if (!song?.edited || !window.confirm(translate('确认放弃所有修改，恢复成导入时的曲谱吗？'))) return
     setBusy(true)
     try {
       player.endEditing(false)

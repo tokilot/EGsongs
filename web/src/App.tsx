@@ -10,6 +10,7 @@ import { useView } from './library/useView.ts'
 import { TonePage } from './player/ToneEditor.tsx'
 import { TrackEditor } from './player/TrackEditor.tsx'
 import { usePlayer } from './player/usePlayer.ts'
+import { StemsPage } from './stems/StemsPage.tsx'
 import { useTheme } from './ui/theme.ts'
 
 function Layout() {
@@ -24,6 +25,7 @@ function Layout() {
       <TopBar />
       <ScoreView />
       {view === 'tones' && <TonePage />}
+      {view === 'stems' && <StemsPage />}
       <ControlBar />
       <TrackEditor />
     </div>

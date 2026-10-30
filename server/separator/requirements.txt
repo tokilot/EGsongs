@@ -1,0 +1,30 @@
+# What separate.py needs, as installed in E:\Code\.venv (Python 3.14.2) on 2026-10-30. Install in three steps:
+#
+#   python -m pip install torch==2.15.0+cu132 --index-url https://download.pytorch.org/whl/cu132
+#   python -m pip install --only-binary=:all: -r server/separator/requirements.txt
+#   python -m pip install --no-deps audio-separator==0.47.2
+#
+# audio-separator goes in without its dependencies: it asks for diffq-fixed (only for Demucs models), which has no
+# wheel for Python 3.14 and does not build, and for beartype<0.19, which cannot read Python 3.14 annotations.
+torchvision==0.29.2
+audioop-lts==0.2.2
+audioread==3.1.0
+beartype==0.22.9
+einops==0.8.2
+julius==0.2.8
+librosa==1.0.0
+ml_collections==1.1.0
+numpy==2.4.3
+onnx-weekly==1.24.0.dev20261026
+onnx2torch-py313==1.6.0
+onnxruntime==1.31.1
+packaging==26.2
+pydub==0.25.1
+PyYAML==6.0.3
+requests==2.32.5
+resampy==0.4.3
+rotary-embedding-torch==0.6.5
+scipy==1.18.0
+six==1.17.0
+soundfile==0.14.0
+tqdm==4.67.3
