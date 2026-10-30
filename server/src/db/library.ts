@@ -281,6 +281,17 @@ export class Library {
     return true
   }
 
+  /**
+   * Forgets what was only browsed: every song that is not a favorite goes (with its file, edited copy and practice
+   * settings), and no song keeps a "last opened" time. Run when the server starts (user's choice, 2026-10-31).
+   */
+  async forgetBrowsing(): Promise<number> {
+    const passing = (this.db.prepare('SELECT id FROM songs WHERE favorite = 0').all() as unknown as Array<{ id: number }>).map((row) => row.id)
+    for (const id of passing) await this.remove(id)
+    this.db.exec('UPDATE songs SET last_opened_at = NULL')
+    return passing.length
+  }
+
   // Files are stored under the song id so user-supplied names never reach the file system.
   private filePath(id: number, extension: string): string {
     return path.join(this.tabsDir, `${id}.${extension}`)

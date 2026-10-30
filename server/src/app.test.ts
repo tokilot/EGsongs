@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createApp } from './app.ts'
-import { parseSongId, SongsterrClient, songUrl } from './songsterr/client.ts'
+import { parseSongId, SongsterrClient, songUrl } from './songs/client.ts'
 
 const META = {
   songId: 34008,

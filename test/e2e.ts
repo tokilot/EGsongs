@@ -19,8 +19,8 @@ const shots = process.argv.includes('--shots')
 const shotDir = path.join(root, 'test', 'shots')
 
 const dataDir = mkdtempSync(path.join(tmpdir(), 'tabs-e2e-'))
-if (existsSync(path.join(root, 'data/songsterr'))) {
-  cpSync(path.join(root, 'data/songsterr'), path.join(dataDir, 'songsterr'), { recursive: true })
+if (existsSync(path.join(root, 'data/songs'))) {
+  cpSync(path.join(root, 'data/songs'), path.join(dataDir, 'songs'), { recursive: true })
 }
 
 const children: ChildProcess[] = []
@@ -220,7 +220,7 @@ async function main() {
         starText: (document.querySelector('header button[aria-pressed]')!.textContent ?? '').trim(),
       }
     })
-    assert(layout.order.join(' | ') === 'Tabs | 吉他音色编辑 | 分轨 | 我的曲谱 | 新建曲谱 | 搜索曲谱 | 帮助', `order is ${layout.order.join(' | ')}`)
+    assert(layout.order.join(' | ') === '曲谱 | 音色 | 分轨 | 我的曲谱 | 新建曲谱 | 搜索曲谱 | 帮助', `order is ${layout.order.join(' | ')}`)
     assert(layout.stacked, 'a top bar button does not have its icon above its label')
     assert(layout.titleOffCentre < 12, `the song title is not centred (${layout.titleOffCentre}px off)`)
     assert(layout.actionsUnder, 'the star and edit buttons are not under the song title')
@@ -862,16 +862,16 @@ async function main() {
     }
     // Its own page, from the switch at the left of the top bar; the song stays loaded underneath.
     const openDialog = async () => {
-      await page.locator('header').getByRole('link', { name: '吉他音色编辑' }).click()
+      await page.locator('header').getByRole('link', { name: '音色', exact: true }).click()
       const dialog = page.getByRole('region', { name: '吉他音色编辑' })
       await dialog.waitFor()
       assert(page.url().endsWith('#/tones'), `the tone page is at ${page.url()}`)
-      assert((await page.locator('header').getByRole('link', { name: '吉他音色编辑' }).getAttribute('aria-current')) === 'page', 'the switch should show the tone page as current')
+      assert((await page.locator('header').getByRole('link', { name: '音色', exact: true }).getAttribute('aria-current')) === 'page', 'the switch should show the tone page as current')
       return dialog
     }
     // And back to the song by its title, without loading it again.
     const backToSong = async () => {
-      await page.locator('header').getByTitle('回到曲谱').click()
+      await page.locator('header').getByTitle('返回曲谱').click()
       await page.getByRole('region', { name: '吉他音色编辑' }).waitFor({ state: 'detached' })
       assert(/#\/song\/\d+$/.test(page.url()), `back at ${page.url()}`)
     }
@@ -912,7 +912,8 @@ async function main() {
     await dialog.getByRole('button', { name: '确定' }).click()
     await page.waitForTimeout(300)
     type Stored = { custom: Array<{ id: string; name: string; family: string; chain: { amp: { params: { gain: number } }; delay: { on: boolean; type: string } } }> }
-    const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('tabs.guitarTones') ?? 'null') as Stored)
+    // Kept by the server (data/tones.json), no longer in the browser.
+    const stored = ((await (await fetch(`http://127.0.0.1:${API_PORT}/api/tones`)).json()) as { library: Stored | null }).library
     const saved = stored?.custom.find((tone) => tone.name === 'My lead')
     assert(saved && saved.family === 'guitar' && saved.chain.amp.params.gain === 95 && saved.chain.delay.on && saved.chain.delay.type === 'analog', `the tone was not saved with its chain: ${JSON.stringify(saved)}`)
     assert((await list.getByRole('button', { name: 'My lead' }).getAttribute('aria-current')) === 'true', 'the new tone should be the one picked')
@@ -1011,10 +1012,21 @@ async function main() {
       assert(await devices.getByRole('radio', { name: /显卡/ }).isDisabled(), 'the graphics card should not be pickable here')
       await stems.getByText(/分轨失败：.*separation model is missing/).waitFor()
 
+      // The model box shows the model, and that its files are not here.
+      const model = stems.getByRole('region', { name: '模型' })
+      await model.getByText('缺少模型文件').waitFor()
+      assert((await model.getByRole('combobox', { name: '模型' }).inputValue()) === 'bs-roformer-sw', 'the model should be BS-RoFormer SW')
+
+      // Importing only picks the file; the separation waits for "start" (which cannot start without the model).
       await stems.locator('input[type="file"]').setInputFiles(recording)
-      await stems.locator('p', { hasText: /^The separation model is missing/ }).waitFor({ timeout: 15_000 })
+      await stems.getByText('tone.wav', { exact: true }).waitFor()
+      const start = stems.getByRole('button', { name: '开始分离音轨' })
+      assert(await start.isDisabled(), 'the separation should not start without the model')
+      assert((await stems.getByRole('navigation', { name: '分轨记录' }).locator('li').count()) === 0, 'picking a file should not start a separation')
       await shot(page, '18-stems')
-      await page.locator('header').getByTitle('回到曲谱').click()
+      await stems.getByRole('button', { name: '移除' }).click()
+      await stems.getByText('tone.wav', { exact: true }).waitFor({ state: 'detached' })
+      await page.locator('header').getByTitle('返回曲谱').click()
       await stems.waitFor({ state: 'detached' })
       assert(/#\/song\/\d+$/.test(page.url()), `back at ${page.url()}`)
       assert((await page.locator('main').getAttribute('data-status')) === 'ready', 'the song should still be ready after the stems page')
@@ -1078,11 +1090,12 @@ async function main() {
       const boxes = await tapped.evaluate(() => {
         const box = (selector: string) => document.querySelector(selector)!.getBoundingClientRect()
         const radios = [...document.querySelectorAll('section[aria-label="处理设备"] [role="radio"]')].map((radio) => radio.getBoundingClientRect())
-        return { device: box('section[aria-label="处理设备"]'), audio: box('section[aria-label="音频"]'), stems: box('section[aria-label="E2E 分轨"]'), radios }
+        return { device: box('section[aria-label="处理设备"]'), model: box('section[aria-label="模型"]'), audio: box('section[aria-label="音频"]'), stems: box('section[aria-label="E2E 分轨"]'), radios }
       })
-      assert(Math.abs(boxes.device.top - boxes.audio.top) < 2 && boxes.device.right <= boxes.audio.left, `the device and audio boxes are not side by side (${JSON.stringify(boxes)})`)
-      assert(boxes.audio.width > boxes.device.width, 'the audio box should be the wider one')
-      assert(boxes.stems.top >= Math.max(boxes.device.bottom, boxes.audio.bottom), 'the stems should come under the device and audio boxes')
+      assert(Math.abs(boxes.device.top - boxes.audio.top) < 2 && Math.abs(boxes.model.top - boxes.audio.top) < 2, `the device, model and audio boxes are not on one row (${JSON.stringify(boxes)})`)
+      assert(boxes.device.right <= boxes.model.left && boxes.model.right <= boxes.audio.left, 'the model box should be between the device and the audio boxes')
+      assert(boxes.audio.width > boxes.device.width && boxes.audio.width > boxes.model.width, 'the audio box should be the widest')
+      assert(boxes.stems.top >= Math.max(boxes.device.bottom, boxes.model.bottom, boxes.audio.bottom), 'the stems should come under the three boxes')
       assert(boxes.radios.length === 2 && boxes.radios[1].top >= boxes.radios[0].bottom, 'the graphics card and the CPU should be one above the other')
 
       const player = region.getByRole('group', { name: '分轨播放' })

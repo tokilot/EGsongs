@@ -1,6 +1,7 @@
 // Plays the stems of one separation together, sample-locked: all of them are decoded and started on one audio
 // clock, so any mix of them (or one alone) lines up exactly. A stem is heard when it is switched on, unless some
 // stems are soloed: then only those are heard.
+import { claimSound, releaseSound } from '../audio/soundOwner.ts'
 
 export interface StemSource {
   name: string
@@ -101,7 +102,12 @@ export class StemMixer {
   getState = () => this.state
 
   private update(change: Partial<MixerState>) {
+    const wasPlaying = this.state.playing
     this.state = { ...this.state, ...change }
+    // One sound at a time: the stems starting stop whatever else on the page was playing (the song, a tone
+    // preview), and the other way round.
+    if (this.state.playing && !wasPlaying) claimSound('stems', () => this.pause())
+    else if (!this.state.playing && wasPlaying) releaseSound('stems')
     for (const listener of this.listeners) listener()
   }
 

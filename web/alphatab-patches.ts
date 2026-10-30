@@ -157,9 +157,9 @@ class TabClefGlyph extends MusicFontGlyph {`,
   // ---- Amp buses: tone chains per track ----
   // The synthesizer mixes every track into one stereo stream, so nothing can be done to one track alone. These
   // patches give it up to eight more stereo streams ("amp buses"). The page sends a routing table, MIDI channel ->
-  // GM program -> [bus, program to play], from the tones the user gave the tracks (guitarTones.ts): a channel
+  // GM program -> [bus, program to play], from the tones the user gave the tracks (web/src/audio/ampRouting.ts): a channel
   // playing a routed program renders into that bus, overdriven and distortion guitar with the clean electric
-  // guitar samples, and the page runs each bus through its tone's chain (web/src/player/ampSim.ts).
+  // guitar samples, and the page runs each bus through its tone's chain (web/src/audio/ampSim.ts).
   // A block of samples is [bus count, main stream, bus 1, …, bus N], all streams the same length; it travels
   // worker -> main thread -> worklet unchanged, and only the synthesizer that fills it and the worklet that plays
   // it know the format.

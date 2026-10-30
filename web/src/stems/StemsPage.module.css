@@ -1,4 +1,4 @@
-/* The stems page takes its sections, buttons and hints from TrackEditor.module.css; these are its own parts. */
+/* The stems page takes its sections, buttons and hints from shared/panel.module.css; these are its own parts. */
 
 /* Covers the score area like the tone editor (same grid cell, see App.module.css) and scrolls on its own. */
 .page {
@@ -27,9 +27,74 @@
 /* The device and the audio side by side, the audio wider; the stems come under both. */
 .top {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2fr);
   gap: 14px;
   align-items: stretch;
+}
+
+/* The model: which one, and what it is. */
+.modelSelect {
+  height: 32px;
+  padding: 0 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.modelInfo {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 4px 10px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.modelInfo dt {
+  color: var(--text-muted);
+}
+
+.modelInfo dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.missing {
+  color: var(--danger);
+}
+
+/* The recording picked, before it is separated. */
+.staged {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 6px 8px;
+  background: var(--surface);
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.staged span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.staged button {
+  display: flex;
+  padding: 2px;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-muted);
+}
+
+.staged button:hover:not(:disabled) {
+  color: var(--danger);
 }
 
 /* The graphics card above the CPU; the one in use is outlined. */
@@ -101,6 +166,17 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
+}
+
+/* "Import" stands out from the box it sits in. */
+.audioHead .importButton {
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+/* "Separate" shows plainly when it cannot start (no file picked, no model). */
+.importButton:disabled {
+  opacity: 0.45;
 }
 
 .list {

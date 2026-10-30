@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -8,11 +8,12 @@ import type { Device, DeviceInfo, SeparationMessage, SeparationRunner, StemItem 
 
 /** Stands in for the Python script: writes two stems once it is told to finish. */
 function fakeSeparator(options: { problem?: string; fail?: string } = {}) {
-  const runs: Array<{ device: Device; finish: () => Promise<void>; cancelled: boolean }> = []
+  const runs: Array<{ device: Device; model: string; finish: () => Promise<void>; cancelled: boolean }> = []
   const runner: SeparationRunner = {
     check: () => options.problem ?? null,
+    modelFiles: () => ({ available: !options.problem, bytes: options.problem ? 0 : 1234 }),
     devices: async () => ({ gpus: [{ name: 'Test GPU', memoryGb: 8 }], torch: '2.15.0', cuda: '13.2' }),
-    run(_input, outputDir, device, onMessage: (message: SeparationMessage) => void) {
+    run(_input, outputDir, model, device, onMessage: (message: SeparationMessage) => void) {
       let resolve!: () => void
       let reject!: (error: Error) => void
       const done = new Promise<void>((yes, no) => {
@@ -21,6 +22,7 @@ function fakeSeparator(options: { problem?: string; fail?: string } = {}) {
       })
       const run = {
         device,
+        model: model.id,
         cancelled: false,
         finish: async () => {
           if (options.fail) return reject(new Error(options.fail))
@@ -187,5 +189,56 @@ describe('stems', () => {
     await app.request(`/api/songs/${song.id}`, { method: 'DELETE' })
     expect(await list()).toHaveLength(1)
     expect(existsSync(path.join(dataDir, 'stems'))).toBe(true)
+  })
+
+  it('lists the models, and separates with the one asked for', async () => {
+    const { app, fake, upload, settle } = setup()
+    const models = (await (await app.request('/api/stems/models')).json()) as Array<{ id: string; stems: string[]; available: boolean; bytes: number; license: string }>
+    expect(models).toMatchObject([{ id: 'bs-roformer-sw', available: true, bytes: 1234, license: 'unknown' }])
+    expect(models[0].stems).toEqual(['vocals', 'drums', 'bass', 'guitar', 'piano', 'other'])
+    await upload()
+    await settle()
+    expect(fake.runs[0].model).toBe('bs-roformer-sw')
+    const unknown = await app.request('/api/stems?name=a.mp3&model=nope', { method: 'POST', body: new Uint8Array([1]) })
+    expect(unknown.status).toBe(400)
+  })
+})
+
+describe('starting the server', () => {
+  it('forgets the songs that are not favorites and every separation, keeping favorites and the tone library', async () => {
+    const fake = fakeSeparator()
+    const first = createApp({ dataDir, separator: fake.runner })
+    const kept = await first.library.addFile('kept.gp', new Uint8Array([1]))
+    const browsed = await first.library.addFile('browsed.gp', new Uint8Array([2]))
+    first.library.update(kept.id, { favorite: true, settings: { speed: 0.8 } })
+    first.library.touch(kept.id)
+    first.library.touch(browsed.id)
+    await first.app.request('/api/stems?name=a.mp3', { method: 'POST', body: new Uint8Array([1]) })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await fake.runs[0].finish()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await first.app.request('/api/tones', { method: 'PUT', body: JSON.stringify({ custom: [] }) })
+    expect(await first.stems.list()).toHaveLength(1)
+    first.library.close()
+
+    const next = createApp({ dataDir, separator: fake.runner, forgetHistory: true })
+    close = () => next.library.close()
+    expect(await next.ready).toEqual({ songs: 1, separations: 1 })
+    const songs = next.library.list()
+    expect(songs.map((song) => song.title)).toEqual(['kept'])
+    expect(songs[0]).toMatchObject({ favorite: true, lastOpenedAt: null, settings: { speed: 0.8 } })
+    expect(readdirSync(path.join(dataDir, 'tabs'))).toEqual([`${kept.id}.gp`])
+    expect(await next.stems.list()).toEqual([])
+    expect(await (await next.app.request('/api/tones')).json()).toEqual({ library: { custom: [] } })
+  })
+
+  it('forgets nothing unless asked (as in the tests and scripts that make apps over and over)', async () => {
+    const first = createApp({ dataDir, separator: fakeSeparator().runner })
+    await first.library.addFile('browsed.gp', new Uint8Array([2]))
+    first.library.close()
+    const next = createApp({ dataDir, separator: fakeSeparator().runner })
+    close = () => next.library.close()
+    expect(await next.ready).toEqual({ songs: 0, separations: 0 })
+    expect(next.library.list()).toHaveLength(1)
   })
 })

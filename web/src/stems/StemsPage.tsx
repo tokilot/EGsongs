@@ -1,10 +1,9 @@
-import { Cpu, Download, FileAudio, Gpu, Headphones, Pause, Play, Trash2, X } from 'lucide-react'
+import { Cpu, Download, FileAudio, Gpu, Headphones, Pause, Play, Scissors, Trash2, X } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import * as api from '../api/client.ts'
-import type { StemDevice, StemDevices, StemItem, StemName } from '../api/client.ts'
-import trackStyles from '../player/TrackEditor.module.css'
-import { usePlayer } from '../player/usePlayer.ts'
-import { useLanguage } from '../ui/i18n.ts'
+import * as api from './api.ts'
+import type { StemDevice, StemDevices, StemItem, StemModel, StemName } from './api.ts'
+import panel from '../shared/panel.module.css'
+import { useLanguage } from '../shared/ui/i18n.ts'
 import { StemMixer } from './stemMixer.ts'
 import styles from './StemsPage.module.css'
 import { decodeToWav } from './wav.ts'
@@ -24,14 +23,31 @@ const DEVICE_LABELS: Record<StemDevice, string> = { cuda: '显卡', cpu: 'CPU' }
 const SILENT_DB = -50
 const POLL_MS = 1000
 const DEVICE_KEY = 'tabs.stemDevice'
+const MODEL_KEY = 'tabs.stemModel'
 
 function storedDevice(): StemDevice | null {
+  const stored = readStored(DEVICE_KEY)
+  return stored === 'cuda' || stored === 'cpu' ? stored : null
+}
+
+function readStored(key: string): string | null {
   try {
-    const stored = localStorage.getItem(DEVICE_KEY)
-    return stored === 'cuda' || stored === 'cpu' ? stored : null
+    return localStorage.getItem(key)
   } catch {
     return null
   }
+}
+
+function store(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    // Not kept; still used for now.
+  }
+}
+
+function megabytes(bytes: number) {
+  return Math.round(bytes / 1024 ** 2)
 }
 
 function clock(seconds: number) {
@@ -49,6 +65,10 @@ export function StemsPage() {
   const [items, setItems] = useState<StemItem[] | null>(null)
   const [devices, setDevices] = useState<StemDevices | null>(null)
   const [picked, setPicked] = useState<StemDevice | null>(storedDevice)
+  const [models, setModels] = useState<StemModel[] | null>(null)
+  const [pickedModel, setPickedModel] = useState<string | null>(() => readStored(MODEL_KEY))
+  // The recording picked, waiting for "start" (so a wrong file costs nothing).
+  const [staged, setStaged] = useState<File | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [preparing, setPreparing] = useState(false)
@@ -61,11 +81,13 @@ export function StemsPage() {
   const device: StemDevice = picked === 'cpu' || (devices !== null && !hasGpu) ? 'cpu' : 'cuda'
   const pickDevice = (next: StemDevice) => {
     setPicked(next)
-    try {
-      localStorage.setItem(DEVICE_KEY, next)
-    } catch {
-      // Not kept; still used for now.
-    }
+    store(DEVICE_KEY, next)
+  }
+  // The model picked before if there still is one, else the first.
+  const model = models?.find((entry) => entry.id === pickedModel) ?? models?.[0] ?? null
+  const pickModel = (id: string) => {
+    setPickedModel(id)
+    store(MODEL_KEY, id)
   }
 
   useEffect(() => {
@@ -73,6 +95,10 @@ export function StemsPage() {
     api
       .getStemDevices()
       .then((next) => !cancelled && setDevices(next))
+      .catch((cause: Error) => !cancelled && setError(cause.message))
+    api
+      .getStemModels()
+      .then((next) => !cancelled && setModels(next))
       .catch((cause: Error) => !cancelled && setError(cause.message))
     return () => {
       cancelled = true
@@ -104,7 +130,7 @@ export function StemsPage() {
   const selected = items?.find((item) => item.id === selectedId) ?? items?.[0] ?? null
 
   const separate = useCallback(
-    async (file: File) => {
+    async (file: File, modelId: string) => {
       setPreparing(true)
       setError(null)
       try {
@@ -114,7 +140,8 @@ export function StemsPage() {
         } catch {
           throw new Error(t('无法读取这个音频文件。'))
         }
-        const item = await api.separateStems(file.name, wav, device)
+        const item = await api.separateStems(file.name, wav, device, modelId)
+        setStaged(null)
         setSelectedId(item.id)
         setReload((count) => count + 1)
       } catch (cause) {
@@ -125,6 +152,8 @@ export function StemsPage() {
     },
     [device, t],
   )
+
+  const canStart = staged !== null && model !== null && model.available && !preparing && !devices?.problem
 
   const remove = async (item: StemItem) => {
     if (item.status === 'done' && !window.confirm(t('删除"{name}"的分轨？', { name: item.name }))) return
@@ -153,14 +182,14 @@ export function StemsPage() {
       <section className={styles.content} aria-label={t('分轨')}>
         <header className={styles.pageHeader}>
           <h1>{t('分轨')}</h1>
-          <p className={trackStyles.hint}>
+          <p className={panel.hint}>
             {t('导入音频后将分成人声、鼓、贝斯、吉他、钢琴、其他六轨。')}
           </p>
         </header>
 
-        {/* One row: the device at the left, the audio (import and the separations made) wider at the right. */}
+        {/* One row: the device, the model, and the audio (import, start, the separations made) widest at the right. */}
         <div className={styles.top}>
-          <section className={trackStyles.section} aria-label={t('处理设备')}>
+          <section className={panel.section} aria-label={t('处理设备')}>
             <h3>{t('处理设备')}</h3>
             {devices ? (
               <>
@@ -180,18 +209,41 @@ export function StemsPage() {
                     </span>
                   </button>
                 </div>
-                <p className={trackStyles.hint}>
+                <p className={panel.hint}>
                   {[t('内存 {n} GB', { n: devices.memoryGb }), devices.torch && `PyTorch ${devices.torch}`, devices.cuda && `CUDA ${devices.cuda}`].filter(Boolean).join(' · ')}
                 </p>
                 {devices.problem && <p className={styles.error}>{t('分轨失败：{error}', { error: devices.problem })}</p>}
               </>
             ) : (
-              <p className={trackStyles.hint}>{t('正在检测当前可用设备…')}</p>
+              <p className={panel.hint}>{t('正在检测当前可用设备…')}</p>
             )}
           </section>
 
+          <section className={panel.section} aria-label={t('模型')}>
+            <h3>{t('模型')}</h3>
+            {models && model ? (
+              <>
+                <select className={styles.modelSelect} value={model.id} aria-label={t('模型')} onChange={(event) => pickModel(event.target.value)}>
+                  {models.map((entry) => (
+                    <option key={entry.id} value={entry.id}>
+                      {entry.name}
+                    </option>
+                  ))}
+                </select>
+                <dl className={styles.modelInfo}>
+                  <dt>{t('分出')}</dt>
+                  <dd>{model.stems.map((name) => t(STEM_LABELS[name])).join('、')}</dd>
+                  <dt>{t('文件')}</dt>
+                  <dd>{model.available ? t('{n} MB', { n: megabytes(model.bytes) }) : <span className={styles.missing}>{t('缺少模型文件')}</span>}</dd>
+                  <dt>{t('许可')}</dt>
+                  <dd>{model.license === 'unknown' ? t('未注明，仅限自用') : model.license}</dd>
+                </dl>
+              </>
+            ) : null}
+          </section>
+
           <section
-            className={`${trackStyles.section} ${styles.audio}`}
+            className={`${panel.section} ${styles.audio}`}
             aria-label={t('音频')}
             data-dragging={dragging || undefined}
             onDragOver={(event) => {
@@ -206,7 +258,7 @@ export function StemsPage() {
               event.preventDefault()
               setDragging(false)
               const file = event.dataTransfer.files[0]
-              if (file && !preparing) void separate(file)
+              if (file && !preparing) setStaged(file)
             }}
           >
             <div className={styles.audioHead}>
@@ -220,14 +272,26 @@ export function StemsPage() {
                 onChange={(event) => {
                   const file = event.target.files?.[0]
                   event.target.value = ''
-                  if (file) void separate(file)
+                  if (file) setStaged(file)
                 }}
               />
-              <button type="button" className={`${trackStyles.primary} ${styles.importButton}`} disabled={preparing} onClick={() => fileInput.current?.click()}>
+              <button type="button" className={`${panel.secondary} ${styles.importButton}`} disabled={preparing} onClick={() => fileInput.current?.click()}>
                 <FileAudio size={16} aria-hidden />
-                {preparing ? t('正在读取音频…') : t('导入音频…')}
+                {t('导入音频…')}
               </button>
             </div>
+            {staged && (
+              <div className={styles.staged}>
+                <span title={staged.name}>{staged.name}</span>
+                <button type="button" aria-label={t('移除')} title={t('移除')} disabled={preparing} onClick={() => setStaged(null)}>
+                  <X size={14} aria-hidden />
+                </button>
+              </div>
+            )}
+            <button type="button" className={`${panel.primary} ${styles.importButton}`} disabled={!canStart} onClick={() => staged && model && void separate(staged, model.id)}>
+              <Scissors size={16} aria-hidden />
+              {preparing ? t('正在读取音频…') : t('开始分离音轨')}
+            </button>
             <nav aria-label={t('分轨记录')}>
               <ul className={styles.list}>
                 {items?.map((item) => (
@@ -245,13 +309,13 @@ export function StemsPage() {
         {error && <p className={styles.error}>{error}</p>}
 
         {selected && (
-          <section className={trackStyles.section} aria-label={selected.name}>
+          <section className={panel.section} aria-label={selected.name}>
             <div className={styles.itemHead}>
               <div className={styles.source}>
                 <h2>{selected.name}</h2>
                 <small>{[selected.sourceName, new Date(selected.createdAt).toLocaleString(), deviceName(selected.device)].filter(Boolean).join(' · ')}</small>
               </div>
-              <button type="button" className={trackStyles.secondary} onClick={() => void remove(selected)}>
+              <button type="button" className={panel.secondary} onClick={() => void remove(selected)}>
                 {selected.status === 'done' || selected.status === 'failed' ? <Trash2 size={16} aria-hidden /> : <X size={16} aria-hidden />}
                 {selected.status === 'done' || selected.status === 'failed' ? t('删除') : t('取消')}
               </button>
@@ -277,7 +341,6 @@ export function StemsPage() {
 
 /** The stems of one separation on one timeline: switch any of them on, solo one or several. */
 function StemPlayer({ item }: { item: StemItem }) {
-  const { state, player } = usePlayer()
   const { t } = useLanguage()
   const [mixer] = useState(
     () =>
@@ -292,14 +355,8 @@ function StemPlayer({ item }: { item: StemItem }) {
   }, [mixer])
   const mix = useSyncExternalStore(mixer.subscribe, mixer.getState)
 
-  // One sound at a time: the score stops the stems, and the stems stop the score.
-  useEffect(() => {
-    if (state.playing) mixer.pause()
-  }, [state.playing, mixer])
-  const toggle = () => {
-    if (!mix.playing && state.playing) player.playPause()
-    mixer.toggle()
-  }
+  // Starting the stems stops the song (and the song starting stops the stems): see audio/soundOwner.ts.
+  const toggle = () => mixer.toggle()
 
   const ready = mix.loaded === mix.total
   return (
@@ -321,7 +378,7 @@ function StemPlayer({ item }: { item: StemItem }) {
         />
         <span className={styles.time}>{clock(mix.duration)}</span>
       </div>
-      {!ready && !mix.error && <p className={trackStyles.hint}>{t('正在载入音轨 {n}/{total}…', { n: mix.loaded, total: mix.total })}</p>}
+      {!ready && !mix.error && <p className={panel.hint}>{t('正在载入音轨 {n}/{total}…', { n: mix.loaded, total: mix.total })}</p>}
       {mix.error && <p className={styles.error}>{t('音轨载入失败：{error}', { error: mix.error })}</p>}
 
       <div className={styles.stems}>
