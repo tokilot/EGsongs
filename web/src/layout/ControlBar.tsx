@@ -187,7 +187,7 @@ export function ControlBar() {
         <button
           type="button"
           className={styles.play}
-          title={state.countingIn ? t('预备拍中，点击取消') : state.playing ? t('暂停') : t('播放')}
+          title={state.playing ? t('暂停') : t('播放')}
           aria-label={state.playing ? t('暂停') : t('播放')}
           data-counting-in={state.countingIn || undefined}
           disabled={!ready || !state.canPlay}
@@ -240,7 +240,6 @@ export function ControlBar() {
                 <Plus size={16} aria-hidden />
               </button>
             </div>
-            <p className={styles.hint}>{t('音高和谱面上的品位一起变化；有变调夹的音轨优先移动变调夹。鼓不受影响。')}</p>
             {state.transposeOutOfRange > 0 && (
               <p className={styles.hint}>{t('有 {n} 个音超出了乐器的音域，已改在相差八度的位置。', { n: state.transposeOutOfRange })}</p>
             )}
@@ -337,7 +336,6 @@ export function ControlBar() {
                 {t('取当前曲速')}
               </button>
             </div>
-            <p className={styles.hint}>{t('BPM 按四分音符计；拍号决定每拍的时值和重音位置。')}</p>
           </div>,
           t('节拍器'),
         )}
@@ -359,7 +357,7 @@ export function ControlBar() {
               currentRevisionId={song.revisionId}
               onSwitch={async (revisionId) => {
                 // Edits belong to one revision; the server drops them when switching.
-                if (song.edited && !window.confirm(t('切换修订会丢掉你对这首曲谱保存过的修改，继续吗？'))) return
+                if (song.edited && !window.confirm(t('切换会丢掉你对这首曲谱保存过的修改，确定继续吗？'))) return
                 replace(await api.switchRevision(song.id, revisionId))
                 close()
                 await openSong(song.id)
@@ -553,9 +551,8 @@ function NoteNamesBox({ onClick }: { onClick: () => void }) {
   const notes = state.noteNames
   if (!notes) return null
   const text = notes.percussion ? '—' : notes.names.join(' ')
-  const title = notes.percussion ? t('鼓轨没有唱名') : notes.manual ? t('唱名（手动指定的调，点击更改）') : t('唱名（谱子的调，点击可手动指定）')
   return (
-    <button type="button" className={styles.noteNames} aria-label={t('唱名')} title={title} onClick={onClick}>
+    <button type="button" className={styles.noteNames} aria-label={t('唱名')} onClick={onClick}>
       <span className={styles.noteNamesKey}>
         {notes.key}
         {notes.manual && <span className={styles.noteNamesManual}>{t('手动')}</span>}
@@ -582,7 +579,6 @@ function KeyPanel({ onPick }: { onPick: () => void }) {
       <button type="button" className={styles.keyFollow} aria-pressed={state.manualKey === null} onClick={() => pick(null)}>
         {t('跟随谱子（{key}）', { key: tabKey })}
       </button>
-      <p className={styles.keyHint}>{t('谱子没写调号时按 C 调读。也可以指定这首曲子的调：')}</p>
       <div className={styles.keyGrid}>
         {KEY_CHOICES.map((key) => (
           <button key={key} type="button" aria-pressed={state.manualKey === key} onClick={() => pick(key)}>
@@ -590,7 +586,6 @@ function KeyPanel({ onPick }: { onPick: () => void }) {
           </button>
         ))}
       </div>
-      {state.transpose !== 0 && <p className={styles.keyHint}>{t('已移调 {n} 个半音，列表里的调已跟着移动。', { n: signed(state.transpose) })}</p>}
     </div>
   )
 }

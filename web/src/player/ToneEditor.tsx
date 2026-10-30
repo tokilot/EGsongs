@@ -90,7 +90,7 @@ export function TonePage() {
     setNaming(null)
   }
   const remove = () => {
-    if (!window.confirm(t('删除音色"{name}"？用到它的音轨会改回原来的采样。', { name: tone.name }))) return
+    if (!window.confirm(t('确认删除音色"{name}"？', { name: tone.name }))) return
     player.deleteTone(tone.id)
     setSelectedId(library.custom.find((item) => item.id !== tone.id)?.id ?? 'distortion')
   }
@@ -103,10 +103,6 @@ export function TonePage() {
       <section className={styles.content} aria-label={t('吉他音色编辑')}>
         <header className={styles.pageHeader}>
           <h1>{t('吉他音色编辑')}</h1>
-          <p className={trackStyles.hint}>
-            {t('这里是你的音色库。用于电吉他的音色出现在「编辑音轨」乐器列表的“电吉他”里，用于贝斯的在“贝斯”里。')}{' '}
-            {t('「试听」反复播放一段固定的音阶小样（电吉他：A 小调五声音阶加几个和弦；贝斯：E 小调五声音阶），和打开的曲子无关，每个音色听的都是同一段，方便对比。')}
-          </p>
         </header>
 
         <div className={styles.libraryLayout}>
@@ -218,7 +214,6 @@ export function TonePage() {
               ))}
             </div>
           </div>
-          <p className={trackStyles.hint}>{t('试听时拧旋钮马上就能听到；保存之后，曲谱里用这个音色的音轨才跟着变。不保存的话，离开这个页面后回到原来的音色。')}</p>
 
           {naming && (
             <div className={styles.naming}>
@@ -287,8 +282,7 @@ export function TonePage() {
             </button>
           )}
         </footer>
-        {tone.builtIn && dirty && <p className={trackStyles.message}>{t('模板不能直接改，要保留这些设置请"另存为"。')}</p>}
-        <p className={trackStyles.hint}>{t('共 {n} 个音色，保存在这个浏览器里。', { n: allTones(library).length })}</p>
+        {tone.builtIn && dirty && <p className={trackStyles.message}>{t('模板不能直接改，请另存为其他音色。')}</p>}
       </section>
     </div>
   )

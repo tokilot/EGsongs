@@ -163,7 +163,6 @@ function PanelContent({ run }: { run: (command: (editor: TabEditor) => void) => 
             {tab === 'bar' && <BarTab run={run} t={t} />}
             {tab === 'text' && <TextTab run={run} t={t} />}
           </div>
-          <p className={styles.hint}>{t('点谱面选位置；方向键移动，数字键输入品位，Delete 删除音，+ / - 改时值，Ctrl+S 保存。')}</p>
         </>
       )}
     </>
@@ -182,7 +181,7 @@ function NoteTab({ run, t }: TabProps) {
   const fret = (
     <Row label={t('品位')}>
       <FretField key={cursor} label={t('品位')} value={note?.fret ?? null} onCommit={(value) => run((editor) => (value === null ? editor.removeNote() : editor.setFret(value)))} />
-      {!note && <span className={styles.hint}>{t('这根弦上还没有音，输入品位后回车即可添加。')}</span>}
+      {!note && <span className={styles.hint}>{t('输入品位后回车即可添加。')}</span>}
     </Row>
   )
   if (!note) return fret
@@ -426,7 +425,7 @@ function DynamicsTab({ run, t }: TabProps) {
         ]}
         onPick={(value) => run((editor) => editor.setCrescendo(value))}
       />
-      <p className={styles.hint}>{t('力度记号要在设置里打开"显示强弱"才会显示在谱面上。')}</p>
+      <p className={styles.hint}>{t('力度记号需先在设置里打开"显示强弱"。')}</p>
     </>
   )
 }

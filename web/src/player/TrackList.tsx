@@ -13,7 +13,7 @@ import styles from './TrackList.module.css'
 export function TrackList() {
   const { state, player } = usePlayer()
   const { t, language } = useLanguage()
-  if (state.tracks.length === 0) return <p className={styles.empty}>{t('还没有打开曲谱。')}</p>
+  if (state.tracks.length === 0) return <p className={styles.empty}>{t('未打开任何曲谱。')}</p>
   const sounding = new Set(state.sounding)
 
   return (

@@ -5,8 +5,8 @@
 //   npm run e2e            run all checks
 //   npm run e2e -- --shots also write screenshots to test/shots/
 import { spawn, type ChildProcess } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { cpus, tmpdir } from 'node:os'
 import path from 'node:path'
 import { chromium, type Page } from 'playwright-core'
 
@@ -55,6 +55,26 @@ async function check(name: string, run: () => Promise<void>) {
     const where = (error as Error).stack?.split('\n').find((line) => line.includes('e2e.ts:'))?.match(/e2e\.ts:(\d+)/)?.[1]
     console.log(`  FAIL ${name}\n       ${(error as Error).message.split('\n')[0]}${where ? `  (test/e2e.ts:${where})` : ''}`)
   }
+}
+
+/** A mono 16-bit WAV of a sine tone, standing in for a recording. */
+function sineWav(seconds: number, frequency: number, sampleRate = 44100): Buffer {
+  const frames = Math.round(seconds * sampleRate)
+  const wav = Buffer.alloc(44 + frames * 2)
+  wav.write('RIFF', 0)
+  wav.writeUInt32LE(36 + frames * 2, 4)
+  wav.write('WAVEfmt ', 8)
+  wav.writeUInt32LE(16, 16)
+  wav.writeUInt16LE(1, 20)
+  wav.writeUInt16LE(1, 22)
+  wav.writeUInt32LE(sampleRate, 24)
+  wav.writeUInt32LE(sampleRate * 2, 28)
+  wav.writeUInt16LE(2, 32)
+  wav.writeUInt16LE(16, 34)
+  wav.write('data', 36)
+  wav.writeUInt32LE(frames * 2, 40)
+  for (let i = 0; i < frames; i++) wav.writeInt16LE(Math.round(Math.sin((2 * Math.PI * frequency * i) / sampleRate) * 8000), 44 + i * 2)
+  return wav
 }
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -124,7 +144,7 @@ async function main() {
   console.log('layout')
   await page.goto(BASE)
   await check('home shows an empty library', async () => {
-    await page.getByText('曲库是空的').waitFor()
+    await page.getByText('曲库为空。').waitFor()
     await shot(page, '01-home')
   })
   await check('the page has three regions and does not scroll', async () => {
@@ -158,10 +178,10 @@ async function main() {
   })
 
   console.log('import and render')
-  await check('importing a Songsterr link opens the song', async () => {
-    await page.getByRole('button', { name: '新建曲谱' }).click()
-    await page.getByLabel('曲谱链接').fill(SONG_LINK)
-    await page.getByRole('button', { name: '导入', exact: true }).click()
+  await check('importing a Songsterr link (pasted into the search box) opens the song', async () => {
+    await page.getByRole('button', { name: '搜索曲谱' }).click()
+    await page.locator('#song-search').fill(SONG_LINK)
+    await page.getByRole('button', { name: /导入这个链接/ }).click()
     await waitReady(page)
     assert(/#\/song\/\d+$/.test(page.url()), `unexpected url ${page.url()}`)
   })
@@ -178,7 +198,7 @@ async function main() {
     const layout = await page.evaluate(() => {
       const header = document.querySelector('header')!
       const box = (selector: string) => document.querySelector(selector)!.getBoundingClientRect()
-      const items = [...header.querySelectorAll('a[href="#/"], a[href="#/tones"], nav button')].map((element) => {
+      const items = [...header.querySelectorAll('a[href="#/"], a[href="#/tones"], a[href="#/stems"], nav button')].map((element) => {
         const place = element.getBoundingClientRect()
         const icon = element.querySelector('svg')!.getBoundingClientRect()
         const label = element.querySelector('span')!.getBoundingClientRect()
@@ -200,7 +220,7 @@ async function main() {
         starText: (document.querySelector('header button[aria-pressed]')!.textContent ?? '').trim(),
       }
     })
-    assert(layout.order.join(' | ') === 'Tabs | 吉他音色编辑 | 我的曲谱 | 新建曲谱 | 搜索曲谱 | 帮助', `order is ${layout.order.join(' | ')}`)
+    assert(layout.order.join(' | ') === 'Tabs | 吉他音色编辑 | 分轨 | 我的曲谱 | 新建曲谱 | 搜索曲谱 | 帮助', `order is ${layout.order.join(' | ')}`)
     assert(layout.stacked, 'a top bar button does not have its icon above its label')
     assert(layout.titleOffCentre < 12, `the song title is not centred (${layout.titleOffCentre}px off)`)
     assert(layout.actionsUnder, 'the star and edit buttons are not under the song title')
@@ -957,6 +977,153 @@ async function main() {
     await page.waitForTimeout(300)
     assert((await page.locator('main').getAttribute('data-status')) === 'ready', 'the song should still be ready after the tone page')
   }
+  await check('stems page: works without a song, shows the computer, keeps an open song, says why it cannot separate here', async () => {
+    // The test backend has no separation model (it lives in the real data/), so the server turns the job down;
+    // the browser logs that refused request, which is expected here.
+    const errorsBefore = pageErrors.length
+    const recording = path.join(dataDir, 'tone.wav')
+    writeFileSync(recording, sineWav(1, 220))
+    try {
+      // On its own, in a page that never opened a song.
+      const fresh = await context.newPage()
+      try {
+        await fresh.goto(`${BASE}/#/stems`)
+        const alone = fresh.getByRole('region', { name: '分轨' })
+        await alone.getByRole('button', { name: '导入音频…' }).waitFor()
+        await alone.getByRole('radio', { name: /CPU/ }).waitFor()
+        assert((await alone.getByRole('navigation', { name: '分轨记录' }).locator('li').count()) === 0, 'a fresh library should list no separations')
+      } finally {
+        await fresh.close()
+      }
+      await stemPlayback()
+
+      await page.locator('header').getByRole('link', { name: '分轨' }).click()
+      const stems = page.getByRole('region', { name: '分轨' })
+      await stems.waitFor()
+      assert(page.url().endsWith('#/stems'), `the stems page is at ${page.url()}`)
+      assert((await page.locator('header').getByRole('link', { name: '分轨' }).getAttribute('aria-current')) === 'page', 'the switch should show the stems page as current')
+      // The CPU by name; without a model (or a card) here, the graphics card cannot be picked.
+      const devices = stems.getByRole('radiogroup', { name: '处理设备' })
+      const cpu = devices.getByRole('radio', { name: /CPU/ })
+      await cpu.waitFor()
+      assert((await cpu.textContent())?.includes(cpus()[0].model.trim()), `the CPU is shown as ${await cpu.textContent()}`)
+      assert((await cpu.getAttribute('aria-checked')) === 'true', 'the CPU should be picked when there is no graphics card to use')
+      assert(await devices.getByRole('radio', { name: /显卡/ }).isDisabled(), 'the graphics card should not be pickable here')
+      await stems.getByText(/分轨失败：.*separation model is missing/).waitFor()
+
+      await stems.locator('input[type="file"]').setInputFiles(recording)
+      await stems.locator('p', { hasText: /^The separation model is missing/ }).waitFor({ timeout: 15_000 })
+      await shot(page, '18-stems')
+      await page.locator('header').getByTitle('回到曲谱').click()
+      await stems.waitFor({ state: 'detached' })
+      assert(/#\/song\/\d+$/.test(page.url()), `back at ${page.url()}`)
+      assert((await page.locator('main').getAttribute('data-status')) === 'ready', 'the song should still be ready after the stems page')
+    } finally {
+      if (page.url().endsWith('#/stems')) await page.goBack()
+      const refused = pageErrors.slice(errorsBefore).filter((error) => !/status of 503/.test(error))
+      pageErrors.splice(errorsBefore, pageErrors.length - errorsBefore, ...refused)
+    }
+  })
+  // A separation put straight into the data directory (sine tones standing in for the model's stems, as WAV in
+  // .flac files: the browser goes by the content). What reaches the speakers is measured on a tap in front of them.
+  async function stemPlayback() {
+    const dir = path.join(dataDir, 'stems', 'e2estems')
+    mkdirSync(dir, { recursive: true })
+    const stems = [
+      { name: 'vocals', frequency: 0, rmsDb: -120 },
+      { name: 'bass', frequency: 110, rmsDb: -20 },
+      { name: 'guitar', frequency: 440, rmsDb: -20 },
+    ]
+    for (const stem of stems) writeFileSync(path.join(dir, `${stem.name}.flac`), sineWav(6, stem.frequency))
+    writeFileSync(
+      path.join(dir, 'stems.json'),
+      JSON.stringify({ id: 'e2estems', name: 'E2E 分轨', sourceName: 'e2e.wav', createdAt: new Date().toISOString(), device: 'cuda', stems: stems.map(({ name, rmsDb }) => ({ name, file: `${name}.flac`, rmsDb })) }),
+    )
+    const tapped = await context.newPage()
+    try {
+      await tapped.addInitScript(() => {
+        const real = Object.getOwnPropertyDescriptor(BaseAudioContext.prototype, 'destination')!.get!
+        const taps: AnalyserNode[] = []
+        ;(window as unknown as { __stemLevel: () => number }).__stemLevel = () =>
+          Math.max(
+            0,
+            ...taps.map((tap) => {
+              const data = new Float32Array(tap.fftSize)
+              tap.getFloatTimeDomainData(data)
+              return Math.sqrt(data.reduce((sum, value) => sum + value * value, 0) / data.length)
+            }),
+          )
+        const tapOf = new WeakMap<BaseAudioContext, AnalyserNode>()
+        Object.defineProperty(BaseAudioContext.prototype, 'destination', {
+          get(this: BaseAudioContext) {
+            let tap = tapOf.get(this)
+            if (!tap) {
+              tap = this.createAnalyser()
+              tap.fftSize = 2048
+              tap.connect(real.call(this) as AudioDestinationNode)
+              tapOf.set(this, tap)
+              taps.push(tap)
+            }
+            return tap
+          },
+        })
+      })
+      await tapped.goto(`${BASE}/#/stems`)
+      const level = () => tapped.evaluate(() => (window as unknown as { __stemLevel: () => number }).__stemLevel())
+      const region = tapped.getByRole('region', { name: '分轨' })
+
+      // Laid out as asked: the device (card above CPU) and the wider audio box on one row, the stems under both.
+      await tapped.locator('section[aria-label="E2E 分轨"]').waitFor()
+      await region.getByRole('radio', { name: /CPU/ }).waitFor()
+      const boxes = await tapped.evaluate(() => {
+        const box = (selector: string) => document.querySelector(selector)!.getBoundingClientRect()
+        const radios = [...document.querySelectorAll('section[aria-label="处理设备"] [role="radio"]')].map((radio) => radio.getBoundingClientRect())
+        return { device: box('section[aria-label="处理设备"]'), audio: box('section[aria-label="音频"]'), stems: box('section[aria-label="E2E 分轨"]'), radios }
+      })
+      assert(Math.abs(boxes.device.top - boxes.audio.top) < 2 && boxes.device.right <= boxes.audio.left, `the device and audio boxes are not side by side (${JSON.stringify(boxes)})`)
+      assert(boxes.audio.width > boxes.device.width, 'the audio box should be the wider one')
+      assert(boxes.stems.top >= Math.max(boxes.device.bottom, boxes.audio.bottom), 'the stems should come under the device and audio boxes')
+      assert(boxes.radios.length === 2 && boxes.radios[1].top >= boxes.radios[0].bottom, 'the graphics card and the CPU should be one above the other')
+
+      const player = region.getByRole('group', { name: '分轨播放' })
+      const play = player.getByRole('button', { name: '播放' })
+      await tapped.waitForFunction(() => !(document.querySelector('[aria-label="分轨播放"] button') as HTMLButtonElement).disabled, undefined, { timeout: 15_000 })
+      // The silent stem starts switched off.
+      assert(!(await region.getByRole('checkbox', { name: '人声' }).isChecked()), 'the silent stem should start switched off')
+      assert(await region.getByRole('checkbox', { name: '吉他' }).isChecked(), 'the guitar should start switched on')
+      await play.click()
+      await tapped.waitForTimeout(800)
+      const both = await level()
+      assert(both > 0.05, `nothing heard with guitar and bass on (level ${both})`)
+      const position = Number(await player.getByRole('slider', { name: '播放位置' }).inputValue())
+      assert(position > 0.4, `the shared position does not move (${position}s)`)
+
+      await region.getByRole('checkbox', { name: '吉他' }).uncheck()
+      await region.getByRole('checkbox', { name: '贝斯' }).uncheck()
+      await tapped.waitForTimeout(400)
+      const none = await level()
+      assert(none < 0.002, `still heard with every stem off (level ${none})`)
+      // Solo is heard even switched off, and only the soloed one.
+      await region.getByRole('button', { name: '独奏吉他' }).click()
+      await tapped.waitForTimeout(400)
+      const solo = await level()
+      assert(solo > 0.05, `the soloed guitar is not heard (level ${solo})`)
+      assert((await region.locator('[data-heard]').count()) === 1, 'only the soloed stem should be shown as heard')
+      await region.getByRole('button', { name: '独奏贝斯' }).click()
+      assert((await region.locator('[data-heard]').count()) === 2, 'two stems can be soloed together')
+
+      await player.getByRole('slider', { name: '播放位置' }).fill('4')
+      const shown = await player.locator('[class*="time"]').first().textContent()
+      assert(shown === '0:04', `seeking does not move the shared time (shows ${shown}, slider ${await player.getByRole('slider', { name: '播放位置' }).inputValue()})`)
+      await shot(tapped, '20-stem-player')
+      await player.getByRole('button', { name: '暂停' }).click()
+      await tapped.waitForTimeout(300)
+      assert((await level()) < 0.002, 'still sounding after pause')
+    } finally {
+      await tapped.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
   await check('the top bar panels stay inside the window', async () => {
     for (const name of ['我的曲谱', '新建曲谱', '搜索曲谱', '帮助']) {
       await page.locator('header').getByRole('button', { name, exact: true }).click()
@@ -1222,6 +1389,44 @@ async function main() {
     await page.getByRole('link', { name: '曲库首页' }).click()
     await page.getByRole('heading', { name: '我的曲谱' }).waitFor()
     await page.locator('main li').filter({ hasText: '本地文件' }).getByRole('button', { name: '删除' }).click()
+    await page.waitForFunction(() => document.querySelectorAll('main li').length === 1)
+  })
+  await check('a new blank tab has the bars, time and instrument asked for, and can be written in', async () => {
+    await page.getByRole('button', { name: '新建曲谱' }).click()
+    const form = page.getByRole('form', { name: '新建空白谱' })
+    await form.getByLabel('曲名').fill('Blank: test/1')
+    await form.getByLabel('乐器').selectOption('bass')
+    await form.getByLabel('拍号').selectOption('3/4')
+    await form.getByLabel('小节数').fill('10')
+    await shot(page, '19-new-blank-tab')
+    await form.getByRole('button', { name: '新建', exact: true }).click()
+    await waitReady(page)
+    await page.locator('header').getByText('Blank: test/1', { exact: true }).waitFor()
+    type Shape = { __tabsPlayer: { api: { score: { masterBars: Array<{ timeSignatureNumerator: number; timeSignatureDenominator: number }>; tracks: Array<{ staves: Array<{ tuning: number[] }> }> } } } }
+    const shape = await page.evaluate(() => {
+      const score = (window as unknown as Shape).__tabsPlayer.api.score
+      return { bars: score.masterBars.length, time: `${score.masterBars[0].timeSignatureNumerator}/${score.masterBars[0].timeSignatureDenominator}`, strings: score.tracks[0].staves[0].tuning.length }
+    })
+    assert(shape.bars === 10 && shape.time === '3/4' && shape.strings === 4, `the blank tab is ${JSON.stringify(shape)}`)
+
+    // Write a fret on the first rest: the first key only brings up the edit box, the next one types.
+    type Edit = { __tabsPlayer: { getSnapshot(): { editing: null | { note: { fret: number } | null } } } }
+    await page.locator('header').getByRole('button', { name: '编辑曲谱' }).click()
+    await page.waitForFunction(() => (window as unknown as Edit).__tabsPlayer.getSnapshot().editing)
+    await page.keyboard.press('5')
+    await page.getByRole('dialog', { name: '曲谱编辑' }).waitFor()
+    await page.waitForTimeout(1000)
+    await page.keyboard.press('5')
+    await page.waitForTimeout(1000)
+    const fret = await page.evaluate(() => (window as unknown as Edit).__tabsPlayer.getSnapshot().editing?.note?.fret ?? null)
+    assert(fret === 5, `typed fret is ${fret}`)
+    await page.getByRole('dialog', { name: '曲谱编辑' }).getByRole('button', { name: '放弃修改' }).click()
+    await page.waitForFunction(() => !(window as unknown as Edit).__tabsPlayer.getSnapshot().editing)
+
+    // Leave the library as the checks after this expect it: only the Songsterr song.
+    await page.getByRole('link', { name: '曲库首页' }).click()
+    await page.getByRole('heading', { name: '我的曲谱' }).waitFor()
+    await page.locator('main li').filter({ hasText: 'Blank: test/1' }).getByRole('button', { name: '删除' }).click()
     await page.waitForFunction(() => document.querySelectorAll('main li').length === 1)
   })
 

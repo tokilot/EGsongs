@@ -197,7 +197,7 @@ function EditorDialog({ index, current }: { index: number; current: TrackSetup }
                 </button>
               </div>
               <ul className={styles.programs} aria-label={t('乐器')}>
-                {programs.length === 0 && tones.length === 0 && <li className={styles.hint}>{t('没有找到乐器。')}</li>}
+                {programs.length === 0 && tones.length === 0 && <li className={styles.hint}>{t('未找到相应乐器。')}</li>}
                 {programs.map((value) => (
                   <li key={value}>
                     <button
@@ -218,7 +218,6 @@ function EditorDialog({ index, current }: { index: number; current: TrackSetup }
                     <button
                       type="button"
                       aria-pressed={tone?.id === item.id}
-                      title={t('音色库里的音色（顶栏「吉他音色编辑」）')}
                       onClick={() => {
                         setProgram(toneProgram(item.family, program))
                         setToneId(item.id)
