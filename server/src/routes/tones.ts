@@ -1,11 +1,11 @@
 import type { Hono } from 'hono'
-import type { ToneFile } from '../tones.ts'
+import type { ToneStore } from '../tones.ts'
 
 // A library is a few kilobytes per tone.
 const MAX_LIBRARY_BYTES = 2 * 1024 * 1024
 
 /** The guitar tone library, one for all songs (see tones.ts). */
-export function toneRoutes(app: Hono, tones: ToneFile) {
+export function toneRoutes(app: Hono, tones: ToneStore) {
   // Null before the library was ever saved here (the page then brings over what the browser had).
   app.get('/api/tones', (c) => c.json({ library: tones.read() }))
 

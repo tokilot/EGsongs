@@ -5,6 +5,7 @@ import { usePlayer } from '../player/usePlayer.ts'
 import { translate } from '../../shared/ui/i18n.ts'
 import { SongContext, type SongContextValue } from './useSong.ts'
 import { keepsSong as pageKeepsSong } from '../../shared/useView.ts'
+import { playlistQueue, setPlaylistQueue } from './playlistQueue.ts'
 
 const SAVE_DELAY_MS = 500
 
@@ -25,6 +26,8 @@ export function SongProvider({ children }: { children: ReactNode }) {
   const lastSaved = useRef('')
   // The song in the player, by id: going to the tone editor and back keeps it as it is.
   const loadedId = useRef<number | null>(null)
+  // The song to start playing once loaded (open with `play`).
+  const playOnLoad = useRef<number | null>(null)
 
   const load = useCallback(
     async (id: number) => {
@@ -44,7 +47,8 @@ export function SongProvider({ children }: { children: ReactNode }) {
         lastSaved.current = ''
         loadedId.current = id
         setSong(opened)
-        player.load(source, practice)
+        player.load(source, practice, playOnLoad.current === id)
+        playOnLoad.current = null
         libraryChanged()
       } catch (cause) {
         if (request !== requestId.current) return
@@ -90,7 +94,8 @@ export function SongProvider({ children }: { children: ReactNode }) {
   }, [load, player])
 
   const open = useCallback(
-    async (id: number) => {
+    async (id: number, options: { play?: boolean } = {}) => {
+      playOnLoad.current = options.play ? id : null
       const hash = `#/song/${id}`
       if (window.location.hash === hash) await load(id)
       else window.location.hash = hash
@@ -112,20 +117,24 @@ export function SongProvider({ children }: { children: ReactNode }) {
   }, [])
 
   // Remember the practice setup per song, a moment after it last changed.
+  // Speed, count-in and metronome as set for practice (out of practice mode they are not in effect, but kept).
   const practice = useMemo<PracticeSettings>(
     () => ({
-      speed: state.speed,
-      trackIndex: state.trackIndex,
+      speed: state.practice.speed,
+      // The track picked by hand, not one a track switch shows for now.
+      trackIndex: state.baseTrack,
       looping: state.looping,
       range: state.range,
-      countIn: state.countIn,
-      metronome: state.metronome,
+      countIn: state.practice.countIn,
+      metronome: state.practice.metronome,
       transpose: state.transpose,
       trackEdits: state.trackEdits,
       trackTones: state.trackTones,
+      trackSounds: state.trackSounds,
       key: state.manualKey,
+      trackSwitchesFrom: state.trackSwitches,
     }),
-    [state.speed, state.trackIndex, state.looping, state.range, state.countIn, state.metronome, state.transpose, state.trackEdits, state.manualKey, state.trackTones],
+    [state.practice, state.baseTrack, state.looping, state.range, state.transpose, state.trackEdits, state.manualKey, state.trackTones, state.trackSounds, state.trackSwitches],
   )
   const songId = song?.id
   const ready = state.status === 'ready'
@@ -157,6 +166,28 @@ export function SongProvider({ children }: { children: ReactNode }) {
       })
       .catch((cause) => console.error(cause))
   }, [song, ready, state.title, state.artist, state.tracks.length, libraryChanged])
+
+  // A playlist being played through: at the end of its song the next one opens and plays; after the last, it stops.
+  // Any other song open (picked from the list, searched) leaves the playlist.
+  const songRef = useRef(song)
+  useEffect(() => {
+    songRef.current = song
+  }, [song])
+  useEffect(
+    () =>
+      player.onFinished(() => {
+        const queue = playlistQueue()
+        if (!queue) return
+        const next = queue.index + 1
+        if (songRef.current?.id !== queue.songIds[queue.index] || next >= queue.songIds.length) {
+          setPlaylistQueue(null)
+          return
+        }
+        setPlaylistQueue({ ...queue, index: next })
+        void open(queue.songIds[next], { play: true })
+      }),
+    [player, open],
+  )
 
   const value = useMemo<SongContextValue>(
     () => ({ song, opening, error, open, close, replace: setSong, libraryVersion, libraryChanged }),

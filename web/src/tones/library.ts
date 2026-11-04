@@ -1,5 +1,6 @@
-// The personal tone library ("音色库"): signal chains (audio/toneChain.ts) kept by the server in data/tones.json,
-// plus built-in templates to start from. A tone is for electric guitar or bass, and is picked in "edit track" among
+// The personal library of effect tones ("效果器音色库"): signal chains (audio/toneChain.ts) kept by the server in
+// data/user.db. There are no built-in templates (removed 2026-11-04): a new tone is saved as a copy of one there
+// is, and the last one cannot be deleted. A tone is for electric guitar or bass, and is picked in "edit track" among
 // the instruments of its kind; a track has one tone at most, kept with the song (audio/ampRouting.ts).
 import { TONE_FAMILIES, type Tone, type ToneFamily } from '../audio/tone.ts'
 import { chainWith, cleanChain, defaultChain, sameChain, scaleOldKnobs, type ToneChain } from '../audio/toneChain.ts'
@@ -14,76 +15,6 @@ export interface ToneLibrary {
 // knobs. Before 5 there was one global tone per bus and an on/off switch; both are gone.
 const STORAGE_VERSION = 5
 
-export const BUILT_IN_TONES: Tone[] = [
-  {
-    id: 'clean',
-    name: '清音',
-    family: 'guitar',
-    builtIn: true,
-    chain: chainWith({
-      dyna: { type: 'smooth', params: { sustain: 30, attack: 50, level: 50 } },
-      amp: {
-        type: 'clean',
-        params: {
-          gain: 30,
-          bass: 50,
-          mid: 50,
-          treble: 60,
-          presence: 55,
-          master: 50,
-          gate: 0,
-        },
-      },
-      cab: { type: '2x12' },
-      reverb: { type: 'room', params: { decay: 1.6, predelay: 15, mix: 30 } },
-    }),
-  },
-  {
-    id: 'distortion',
-    name: '失真',
-    family: 'guitar',
-    builtIn: true,
-    chain: chainWith({
-      amp: {
-        type: 'highgain',
-        params: {
-          gain: 65,
-          bass: 55,
-          mid: 45,
-          treble: 55,
-          presence: 60,
-          master: 50,
-          gate: 30,
-        },
-      },
-      cab: { type: '4x12' },
-      reverb: { type: 'room', params: { decay: 1.3, predelay: 10, mix: 15 } },
-    }),
-  },
-  {
-    id: 'bass-clean',
-    name: '贝斯',
-    family: 'bass',
-    builtIn: true,
-    chain: chainWith({
-      dyna: { type: 'smooth', params: { sustain: 50, attack: 40, level: 50 } },
-      amp: {
-        type: 'bass',
-        params: {
-          gain: 20,
-          bass: 55,
-          mid: 50,
-          treble: 50,
-          presence: 45,
-          master: 50,
-          gate: 0,
-        },
-      },
-      cab: { type: '4x10', params: { lowcut: 30, highcut: 6000 } },
-    }),
-  },
-]
-
 // A starting point for 長坂の戦い<flying cloud> (Dynasty Warriors Origins; Songsterr s1866166, revision 2484748):
 // two distortion guitars, one a lead line (single notes, bends and vibrato, E3–G5) and one a rhythm part (power
 // chords, 29% palm muted) at 163 bpm. The amp, presence and EQ were fitted (2026-10-24) to the average spectrum
@@ -94,7 +25,6 @@ export const FLYING_CLOUD_TONE: Tone = {
   id: 'custom-flying-cloud',
   name: '長坂の戦い〈Flying Cloud〉',
   family: 'guitar',
-  builtIn: false,
   chain: chainWith({
     od: { type: 'overdrive', params: { gain: 10, tone: 60, level: 80 } },
     amp: {
@@ -123,9 +53,9 @@ export const DEFAULT_TONE_LIBRARY: ToneLibrary = {
   presetVersion: STORAGE_VERSION,
 }
 
-/** Every tone there is to pick from: built-in first, then the user's. */
+/** Every tone there is to pick from. */
 export function allTones(library: ToneLibrary): Tone[] {
-  return [...BUILT_IN_TONES, ...library.custom]
+  return library.custom
 }
 
 export function findTone(library: ToneLibrary, id: string | undefined): Tone | null {
@@ -201,7 +131,7 @@ function readTone(raw: unknown, version: number): Tone | null {
         ? FLYING_CLOUD_TONE.chain
         : legacyChain(params, tone.type as string)
   } else return null
-  return { id: tone.id, name: tone.name, family, builtIn: false, chain }
+  return { id: tone.id, name: tone.name, family, chain }
 }
 
 /** Reads the stored library, dropping anything malformed rather than failing. */
@@ -239,7 +169,7 @@ export function withoutTone(library: ToneLibrary, id: string): ToneLibrary {
 /** The library with one of the user's tones added or replaced. */
 export function withTone(library: ToneLibrary, tone: Tone): ToneLibrary {
   const custom = library.custom.some((item) => item.id === tone.id)
-    ? library.custom.map((item) => (item.id === tone.id ? { ...tone, builtIn: false } : item))
-    : [...library.custom, { ...tone, builtIn: false }]
+    ? library.custom.map((item) => (item.id === tone.id ? tone : item))
+    : [...library.custom, tone]
   return { ...library, custom }
 }

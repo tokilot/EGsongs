@@ -9,10 +9,9 @@ export const TONE_FAMILIES: ToneFamily[] = ['guitar', 'bass']
 
 export interface Tone {
   id: string
-  /** Built-in templates have Chinese names (translated in the UI); the user's are shown as typed. */
+  /** Shown as typed. */
   name: string
   family: ToneFamily
-  builtIn: boolean
   chain: ToneChain
 }
 

@@ -1,4 +1,4 @@
-import { Play, SlidersHorizontal, X } from 'lucide-react'
+import { AudioWaveform, Play, SlidersHorizontal, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useLanguage } from '../../shared/ui/i18n.ts'
 import { GM_PROGRAMS_EN, GM_PROGRAMS_ZH, programName } from './gmPrograms.ts'
@@ -7,6 +7,7 @@ import { allTones, findTone } from '../../tones/library.ts'
 import { useTones } from '../../tones/toneStore.ts'
 import { InstrumentIcon } from './InstrumentIcon.tsx'
 import { openTrackEditor, useTrackEditor } from './trackEditorStore.ts'
+import { findPreset, presetPlace, sameSound, type TrackSound } from './trackSounds.ts'
 import {
   INSTRUMENT_CATEGORIES,
   instrumentPlace,
@@ -53,8 +54,12 @@ function EditorDialog({ index, current }: { index: number; current: TrackSetup }
   const [tuning, setTuning] = useState(current.tuning)
   const [capo, setCapo] = useState(current.capo)
   const [adjust, setAdjust] = useState(state.trackEdits[index]?.adjustFingering ?? true)
-  // Opens on the category and kind of the track's own instrument.
-  const [place, setPlace] = useState(() => instrumentPlace(current.program))
+  // Opens on the category and kind of the track's own instrument (or of the extra preset it plays).
+  const [place, setPlace] = useState(() => {
+    const given = state.trackSounds[index]
+    const found = findPreset(state.extraSoundFonts, given)
+    return found && given ? presetPlace(found.font.name, { name: found.name, program: given.program }, found.font.kind) : instrumentPlace(current.program)
+  })
   const [search, setSearch] = useState('')
   const [message, setMessage] = useState<string | null>(null)
   // A tone from the library, picked among the instruments of its kind; none means the sound font's samples.
@@ -62,6 +67,9 @@ function EditorDialog({ index, current }: { index: number; current: TrackSetup }
   const savedTone = findTone(toneLibrary, state.trackTones[index])?.id ?? null
   const [toneId, setToneId] = useState<string | null>(savedTone)
   const tone = findTone(toneLibrary, toneId ?? undefined)
+  // Or a preset of an extra sound font (data/soundfonts/), offered with the kind of instrument it is.
+  const savedSound = findPreset(state.extraSoundFonts, state.trackSounds[index]) ? state.trackSounds[index] : null
+  const [sound, setSound] = useState<TrackSound | null>(savedSound)
 
   const close = () => openTrackEditor(null)
   useEffect(() => {
@@ -73,8 +81,8 @@ function EditorDialog({ index, current }: { index: number; current: TrackSetup }
   }, [])
 
   const bass = isBassTuning(tuning)
-  const presets = tuningPresets(tuning.length, bass)
-  const preset = presets.find((item) => sameTuning(item.tuning, tuning))
+  const tunings = tuningPresets(tuning.length, bass)
+  const preset = tunings.find((item) => sameTuning(item.tuning, tuning))
   const stringsChanged = tuning.length !== current.tuning.length
   const tuningChanged = !sameTuning(tuning, current.tuning) || capo !== current.capo
   const programs = useMemo(() => {
@@ -84,13 +92,22 @@ function EditorDialog({ index, current }: { index: number; current: TrackSetup }
     return pool.filter((program) => !query || GM_PROGRAMS_EN[program].toLowerCase().includes(query) || GM_PROGRAMS_ZH[program].includes(query))
   }, [place, search])
   // The library's tones go with the electric guitars and the basses, by what each tone is for.
-  const toneLabel = (item: Tone) => (item.builtIn ? t(item.name) : item.name)
+  const toneLabel = (item: Tone) => item.name
   const query = search.trim().toLowerCase()
   const toneFamily = query ? null : toneFamilyOf(INSTRUMENT_CATEGORIES[place.category]?.subs[place.sub]?.programs[0] ?? -1)
   const tones =
     query || toneFamily
       ? allTones(toneLibrary).filter((item) => (query ? toneLabel(item).toLowerCase().includes(query) : item.family === toneFamily))
       : []
+  const presets = state.extraSoundFonts.flatMap((font) =>
+    font.presets
+      .filter((preset) => {
+        if (query) return preset.name.toLowerCase().includes(query) || font.name.toLowerCase().includes(query)
+        const at = presetPlace(font.name, preset, font.kind)
+        return at.category === place.category && at.sub === place.sub
+      })
+      .map((preset) => ({ font: font.name, kind: font.kind, ...preset })),
+  )
   // The picked tone plays the preview (and stands in for itself, unchanged, on the tracks that use it).
   useEffect(() => {
     player.setEditedTone(tone)
@@ -116,7 +133,9 @@ function EditorDialog({ index, current }: { index: number; current: TrackSetup }
     }
     const toneChanged = toneId !== savedTone
     if (toneChanged) player.setTrackTone(index, toneId)
-    if (Object.keys(edit).length === 0 && (editingTab || (toneChanged && !state.trackEdits[index]))) {
+    const soundChanged = !sameSound(sound, savedSound)
+    if (soundChanged) player.setTrackSound(index, sound)
+    if (Object.keys(edit).length === 0 && (editingTab || ((toneChanged || soundChanged) && !state.trackEdits[index]))) {
       close()
       return
     }
@@ -194,22 +213,23 @@ function EditorDialog({ index, current }: { index: number; current: TrackSetup }
                   type="button"
                   className={panel.preview}
                   disabled={!state.canPlay}
-                  onClick={() => (tone ? player.previewEditedTone() : player.previewInstrument(program, tuning))}
+                  onClick={() => (tone ? player.previewEditedTone() : player.previewInstrument(program, tuning, sound))}
                 >
                   <Play size={14} aria-hidden />
                   {t('试听')}
                 </button>
               </div>
               <ul className={styles.programs} aria-label={t('乐器')}>
-                {programs.length === 0 && tones.length === 0 && <li className={panel.hint}>{t('未找到相应乐器。')}</li>}
+                {programs.length === 0 && tones.length === 0 && presets.length === 0 && <li className={panel.hint}>{t('未找到相应乐器。')}</li>}
                 {programs.map((value) => (
                   <li key={value}>
                     <button
                       type="button"
-                      aria-pressed={!tone && value === program}
+                      aria-pressed={!tone && !sound && value === program}
                       onClick={() => {
                         setProgram(value)
                         setToneId(null)
+                        setSound(null)
                       }}
                     >
                       <InstrumentIcon program={value} size={15} />
@@ -225,10 +245,32 @@ function EditorDialog({ index, current }: { index: number; current: TrackSetup }
                       onClick={() => {
                         setProgram(toneProgram(item.family, program))
                         setToneId(item.id)
+                        setSound(null)
                       }}
                     >
                       <SlidersHorizontal size={15} aria-hidden className={styles.toneIcon} />
                       <span>{toneLabel(item)}</span>
+                    </button>
+                  </li>
+                ))}
+                {presets.map((item) => (
+                  <li key={`${item.font}/${item.program}`}>
+                    <button
+                      type="button"
+                      title={item.font}
+                      aria-pressed={sameSound(sound, item)}
+                      onClick={() => {
+                        // Its samples carry their own sound, without a tone; the track takes a program of the
+                        // preset's kind (a distortion guitar for the electric guitars) unless it has one already.
+                        const at = presetPlace(item.font, item, item.kind)
+                        const kind = INSTRUMENT_CATEGORIES[at.category].subs[at.sub].programs
+                        if (!kind.includes(program)) setProgram(kind.includes(30) ? 30 : kind[0])
+                        setToneId(null)
+                        setSound({ font: item.font, program: item.program })
+                      }}
+                    >
+                      <AudioWaveform size={15} aria-hidden className={styles.toneIcon} />
+                      <span>{item.name}</span>
                     </button>
                   </li>
                 ))}
@@ -258,12 +300,12 @@ function EditorDialog({ index, current }: { index: number; current: TrackSetup }
                     aria-label={t('调弦')}
                     value={preset ? preset.name : ''}
                     onChange={(event) => {
-                      const chosen = presets.find((item) => item.name === event.target.value)
+                      const chosen = tunings.find((item) => item.name === event.target.value)
                       if (chosen) setTuning(chosen.tuning)
                     }}
                   >
                     {!preset && <option value="">{t('自定义调弦')}</option>}
-                    {presets.map((item) => (
+                    {tunings.map((item) => (
                       <option key={item.name} value={item.name}>
                         {t(item.name)}
                       </option>
@@ -319,9 +361,10 @@ function EditorDialog({ index, current }: { index: number; current: TrackSetup }
           <button
             type="button"
             className={panel.secondary}
-            disabled={(editingTab ? !differs(original) : !state.trackEdits[index]) && !savedTone}
+            disabled={(editingTab ? !differs(original) : !state.trackEdits[index]) && !savedTone && !savedSound}
             onClick={() => {
               if (savedTone) player.setTrackTone(index, null)
+              if (savedSound) player.setTrackSound(index, null)
               if (editingTab) {
                 // Back to the track as loaded, keeping the pitches.
                 const tuningBack = !sameTuning(original.tuning, current.tuning) || original.capo !== current.capo

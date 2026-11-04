@@ -58,7 +58,7 @@ interface Summary {
 const problems: string[] = []
 
 async function main() {
-  start('node', ['src/index.ts'], path.join(root, 'server'), { TABS_PORT: String(API_PORT), TABS_DATA_DIR: dataDir })
+  start('node', ['src/index.ts'], path.join(root, 'server'), { TABS_PORT: String(API_PORT), TABS_DATA_DIR: dataDir, TABS_SOUNDFONTS: path.join(root, 'data/soundfonts') })
   start('npx', ['vite', '--port', String(WEB_PORT), '--strictPort'], path.join(root, 'web'), { TABS_PORT: String(API_PORT) })
   await waitFor(`http://127.0.0.1:${API_PORT}/api/songs`)
   await waitFor(BASE)

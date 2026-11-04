@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { MAX_AMP_BUSES, PREVIEW_CHANNELS, cleanTrackTones, planAmpBuses, routedProgram } from '../audio/ampRouting.ts'
 import { toneFamilyOf, toneProgram, type Tone } from '../audio/tone.ts'
-import { BUILT_IN_TONES, DEFAULT_TONE_LIBRARY, FLYING_CLOUD_TONE, allTones, findTone, isStarterFlyingCloud, legacyChain, parseToneLibrary, withTone, withoutTone, type ToneLibrary } from './library.ts'
+import { DEFAULT_TONE_LIBRARY, FLYING_CLOUD_TONE, allTones, findTone, isStarterFlyingCloud, legacyChain, parseToneLibrary, withTone, withoutTone, type ToneLibrary } from './library.ts'
 import { chainWith, engineModule, sameChain } from '../audio/toneChain.ts'
 
-const mine: Tone = { id: 'custom-1', name: 'My lead', family: 'guitar', builtIn: false, chain: chainWith({ amp: { type: 'metal', params: { gain: 80 } } }) }
+const mine: Tone = { id: 'custom-1', name: 'My lead', family: 'guitar', chain: chainWith({ amp: { type: 'metal', params: { gain: 80 } } }) }
 const oldParams = { gain: 8, bass: 6, mid: 7, treble: 5, reverb: 3, level: 6 }
 
 describe('tone library', () => {
@@ -15,8 +15,8 @@ describe('tone library', () => {
       custom: [mine, { id: 'broken', name: 'x', family: 'guitar' }, { ...mine, id: 'custom-2', builtIn: true }, { ...mine, id: 'odd', family: 'piano' }],
     })
     expect(parsed.custom.map((tone) => tone.id)).toEqual(['custom-1', 'custom-2'])
-    // Only the built-in list makes a tone built in.
-    expect(parsed.custom.every((tone) => !tone.builtIn)).toBe(true)
+    // The flag the templates had is not kept.
+    expect(parsed.custom.every((tone) => !('builtIn' in tone))).toBe(true)
   })
 
   it('keeps the tones of before (bus types) as guitar tones', () => {
@@ -35,14 +35,14 @@ describe('tone library', () => {
 
   it('adds, replaces and removes tones', () => {
     let library = withTone({ custom: [] }, mine)
-    expect(allTones(library)).toHaveLength(BUILT_IN_TONES.length + 1)
+    // No templates: only the tones of the library.
+    expect(allTones(library)).toEqual([mine])
     library = withTone(library, { ...mine, name: 'Solo' })
     expect(library.custom).toHaveLength(1)
     expect(findTone(library, mine.id)?.name).toBe('Solo')
     library = withoutTone(library, mine.id)
     expect(findTone(library, mine.id)).toBeNull()
-    // Built-in templates for both families.
-    expect(new Set(BUILT_IN_TONES.map((tone) => tone.family))).toEqual(new Set(['guitar', 'bass']))
+    expect(findTone(library, 'distortion')).toBeNull()
   })
 
   it('offers Flying Cloud once, and keeps edits and deletion', () => {
@@ -84,7 +84,9 @@ describe('tones given to tracks', () => {
   })
 
   it('routes a track to the bus of its tone, sharing buses between tracks', () => {
-    const library = withTone(DEFAULT_TONE_LIBRARY, mine)
+    const clean: Tone = { ...mine, id: 'clean' }
+    const bass: Tone = { ...mine, id: 'bass-clean', family: 'bass' }
+    const library = [clean, mine, bass].reduce((all, tone) => withTone(all, tone), { custom: [] } as ToneLibrary)
     const tracks = [
       { index: 0, channels: [0, 1], isPercussion: false },
       { index: 1, channels: [2, 3], isPercussion: false },

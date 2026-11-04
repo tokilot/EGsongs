@@ -7,7 +7,8 @@ export interface SongContextValue {
   /** Set while a song is being fetched. */
   opening: boolean
   error: string | null
-  open: (id: number) => Promise<void>
+  /** With `play`, the song starts playing as soon as it is ready (the next song of a playlist). */
+  open: (id: number, options?: { play?: boolean }) => Promise<void>
   /** Back to the library home. */
   close: () => void
   /** Replaces the current song after the server changed it (favourite, revision). */

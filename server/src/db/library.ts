@@ -1,7 +1,6 @@
-import { mkdirSync } from 'node:fs'
-import { readFile, rm, writeFile } from 'node:fs/promises'
+import { existsSync, readFileSync, rmSync } from 'node:fs'
 import path from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
+import type { DatabaseSync } from 'node:sqlite'
 
 export type SongSource = 'songsterr' | 'file'
 
@@ -63,6 +62,17 @@ interface SongRow {
   last_opened_at: string | null
 }
 
+/** A song's tab file: what was uploaded, or the copy changed in the editor (Guitar Pro 7). */
+type FileKind = 'source' | 'edited'
+
+const FILES_SCHEMA = `
+CREATE TABLE IF NOT EXISTS song_files (
+  song_id INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  bytes BLOB NOT NULL,
+  PRIMARY KEY (song_id, kind)
+)`
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS songs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -113,46 +123,65 @@ function toSong(row: SongRow): Song {
   }
 }
 
+/**
+ * The library: every song's details, practice settings and tab files, all in data/user.db, the same whether a song was
+ * uploaded or imported by link (the online tabs themselves are cached in data/songs/).
+ */
 export class Library {
   private readonly db: DatabaseSync
-  private readonly tabsDir: string
 
-  constructor(dataDir: string) {
-    this.tabsDir = path.join(dataDir, 'tabs')
-    mkdirSync(this.tabsDir, { recursive: true })
-    this.db = new DatabaseSync(path.join(dataDir, 'library.db'))
+  /** `db`: data/user.db (openUserDb), which it closes with close(). */
+  constructor(db: DatabaseSync, dataDir: string) {
+    this.db = db
     this.db.exec(SCHEMA)
+    this.db.exec(FILES_SCHEMA)
     // Added after the first release; older libraries get the column on first start.
     const columns = this.db.prepare('PRAGMA table_info(songs)').all() as unknown as Array<{ name: string }>
     if (!columns.some((column) => column.name === 'edited')) this.db.exec('ALTER TABLE songs ADD COLUMN edited INTEGER NOT NULL DEFAULT 0')
+    this.bringInTabFiles(path.join(dataDir, 'tabs'))
+  }
+
+  // Until 2026-10-31 the files were kept in data/tabs/ ({id}.{extension}, {id}.edited.gp): taken in once, then gone.
+  private bringInTabFiles(dir: string) {
+    if (!existsSync(dir)) return
+    const rows = this.db.prepare('SELECT * FROM songs').all() as unknown as SongRow[]
+    for (const song of rows.map(toSong)) {
+      const take = (name: string, kind: FileKind) => {
+        const old = path.join(dir, name)
+        if (existsSync(old)) this.putFile(song.id, kind, readFileSync(old))
+      }
+      if (song.source === 'file' && song.fileName) take(`${song.id}.${extensionOf(song.fileName)}`, 'source')
+      if (song.edited) take(`${song.id}.edited.gp`, 'edited')
+    }
+    rmSync(dir, { recursive: true, force: true })
+  }
+
+  private putFile(id: number, kind: FileKind, bytes: Uint8Array) {
+    this.db.prepare('INSERT OR REPLACE INTO song_files (song_id, kind, bytes) VALUES (?, ?, ?)').run(id, kind, bytes)
+  }
+
+  private getFile(id: number, kind: FileKind): Uint8Array | null {
+    const row = this.db.prepare('SELECT bytes FROM song_files WHERE song_id = ? AND kind = ?').get(id, kind) as { bytes: Uint8Array } | undefined
+    return row ? new Uint8Array(row.bytes) : null
   }
 
   /** The tab as changed in the editor (a Guitar Pro 7 file), or null when it has not been edited. */
   async readEdited(song: Song): Promise<Uint8Array | null> {
-    if (!song.edited) return null
-    try {
-      return await readFile(this.editedPath(song.id))
-    } catch {
-      return null
-    }
+    return song.edited ? this.getFile(song.id, 'edited') : null
   }
 
   async saveEdited(id: number, bytes: Uint8Array): Promise<Song | null> {
     if (!this.get(id)) return null
-    await writeFile(this.editedPath(id), bytes)
+    this.putFile(id, 'edited', bytes)
     this.db.prepare('UPDATE songs SET edited = 1 WHERE id = ?').run(id)
     return this.get(id)
   }
 
   /** Back to the tab as imported. */
   async discardEdited(id: number): Promise<Song | null> {
-    await rm(this.editedPath(id), { force: true })
+    this.db.prepare("DELETE FROM song_files WHERE song_id = ? AND kind = 'edited'").run(id)
     this.db.prepare('UPDATE songs SET edited = 0 WHERE id = ?').run(id)
     return this.get(id)
-  }
-
-  private editedPath(id: number): string {
-    return path.join(this.tabsDir, `${id}.edited.gp`)
   }
 
   close() {
@@ -215,7 +244,7 @@ export class Library {
 
   async addFile(originalName: string, bytes: Uint8Array): Promise<Song> {
     const baseName = path.basename(originalName.replace(/\\/g, '/'))
-    const extension = path.extname(baseName).slice(1).toLowerCase()
+    const extension = extensionOf(baseName)
     if (!TAB_EXTENSIONS.includes(extension)) {
       throw new Error(`Unsupported file type ".${extension}". Supported: ${TAB_EXTENSIONS.join(', ')}.`)
     }
@@ -224,17 +253,13 @@ export class Library {
       .prepare("INSERT INTO songs (source, title, artist, file_name, created_at) VALUES ('file', ?, '', ?, ?)")
       .run(title, baseName, new Date().toISOString())
     const id = Number(result.lastInsertRowid)
-    await writeFile(this.filePath(id, extension), bytes)
+    this.putFile(id, 'source', bytes)
     return this.get(id)!
   }
 
+  /** The uploaded tab file, or null (songs imported by link have none: their tracks are in the online cache). */
   async readFile(song: Song): Promise<Uint8Array | null> {
-    if (song.source !== 'file' || !song.fileName) return null
-    try {
-      return await readFile(this.filePath(song.id, path.extname(song.fileName).slice(1).toLowerCase()))
-    } catch {
-      return null
-    }
+    return song.source === 'file' ? this.getFile(song.id, 'source') : null
   }
 
   update(id: number, changes: { favorite?: boolean; settings?: SongSettings; title?: string; artist?: string; trackCount?: number }): Song | null {
@@ -274,10 +299,7 @@ export class Library {
     const song = this.get(id)
     if (!song) return false
     this.db.prepare('DELETE FROM songs WHERE id = ?').run(id)
-    await rm(this.editedPath(id), { force: true })
-    if (song.source === 'file' && song.fileName) {
-      await rm(this.filePath(id, path.extname(song.fileName).slice(1).toLowerCase()), { force: true })
-    }
+    this.db.prepare('DELETE FROM song_files WHERE song_id = ?').run(id)
     return true
   }
 
@@ -289,11 +311,12 @@ export class Library {
     const passing = (this.db.prepare('SELECT id FROM songs WHERE favorite = 0').all() as unknown as Array<{ id: number }>).map((row) => row.id)
     for (const id of passing) await this.remove(id)
     this.db.exec('UPDATE songs SET last_opened_at = NULL')
+    if (passing.length > 0) this.db.exec('VACUUM')
     return passing.length
   }
 
-  // Files are stored under the song id so user-supplied names never reach the file system.
-  private filePath(id: number, extension: string): string {
-    return path.join(this.tabsDir, `${id}.${extension}`)
-  }
+}
+
+function extensionOf(fileName: string): string {
+  return path.extname(fileName).slice(1).toLowerCase()
 }

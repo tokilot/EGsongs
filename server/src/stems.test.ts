@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -166,17 +166,6 @@ describe('stems', () => {
     expect(await (await app.request('/api/stems/devices')).json()).toMatchObject({ gpus: [{ name: 'Test GPU', memoryGb: 8 }], torch: '2.15.0', cuda: '13.2', problem: null })
   })
 
-  it('keeps the separations made per song by the first version', async () => {
-    const old = path.join(dataDir, 'stems', '13')
-    mkdirSync(old, { recursive: true })
-    writeFileSync(path.join(old, 'stems.json'), JSON.stringify({ sourceName: 'Arena.aac', createdAt: '2026-10-29T17:49:41.739Z', stems: [{ name: 'guitar', file: 'guitar.flac', rmsDb: -15 }] }))
-    writeFileSync(path.join(old, 'guitar.flac'), 'G')
-    const { app, list } = setup()
-    expect(await list()).toMatchObject([{ id: '13', name: 'Arena', status: 'done' }])
-    expect(JSON.parse(readFileSync(path.join(old, 'stems.json'), 'utf8')).id).toBe('13')
-    expect(await (await app.request('/api/stems/13/guitar')).text()).toBe('G')
-  })
-
   it('separations stay when a song is deleted', async () => {
     const { app, fake, list, upload, settle } = setup()
     const { library } = createApp({ dataDir, separator: fake.runner })
@@ -188,7 +177,7 @@ describe('stems', () => {
     await settle()
     await app.request(`/api/songs/${song.id}`, { method: 'DELETE' })
     expect(await list()).toHaveLength(1)
-    expect(existsSync(path.join(dataDir, 'stems'))).toBe(true)
+    expect(existsSync(path.join(dataDir, 'tmps', 'stems'))).toBe(true)
   })
 
   it('lists the models, and separates with the one asked for', async () => {
@@ -227,7 +216,10 @@ describe('starting the server', () => {
     const songs = next.library.list()
     expect(songs.map((song) => song.title)).toEqual(['kept'])
     expect(songs[0]).toMatchObject({ favorite: true, lastOpenedAt: null, settings: { speed: 0.8 } })
-    expect(readdirSync(path.join(dataDir, 'tabs'))).toEqual([`${kept.id}.gp`])
+    // The favorite keeps its file (kept in user.db, whatever the source); nothing is left in data/tmps/.
+    expect(await next.library.readFile(songs[0])).toEqual(new Uint8Array([1]))
+    expect(existsSync(path.join(dataDir, 'tabs'))).toBe(false)
+    expect(existsSync(path.join(dataDir, 'tmps'))).toBe(false)
     expect(await next.stems.list()).toEqual([])
     expect(await (await next.app.request('/api/tones')).json()).toEqual({ library: { custom: [] } })
   })
@@ -240,5 +232,40 @@ describe('starting the server', () => {
     close = () => next.library.close()
     expect(await next.ready).toEqual({ songs: 0, separations: 0 })
     expect(next.library.list()).toHaveLength(1)
+  })
+})
+
+describe('tab files', () => {
+  it('are kept in user.db: the uploaded file and the edited copy, across a restart', async () => {
+    const first = createApp({ dataDir, separator: fakeSeparator().runner })
+    const song = await first.library.addFile('riff.gp', new Uint8Array([1, 2, 3]))
+    await first.library.saveEdited(song.id, new Uint8Array([7, 7]))
+    first.library.close()
+    const next = createApp({ dataDir, separator: fakeSeparator().runner })
+    close = () => next.library.close()
+    const again = next.library.get(song.id)!
+    expect(await next.library.readFile(again)).toEqual(new Uint8Array([1, 2, 3]))
+    expect(await next.library.readEdited(again)).toEqual(new Uint8Array([7, 7]))
+    await next.library.discardEdited(song.id)
+    expect(await next.library.readEdited(next.library.get(song.id)!)).toBeNull()
+    // No folder of tab files any more.
+    expect(existsSync(path.join(dataDir, 'tabs'))).toBe(false)
+  })
+
+  it('in the data/tabs/ of before are taken in once, and the folder goes', async () => {
+    const first = createApp({ dataDir, separator: fakeSeparator().runner })
+    const song = await first.library.addFile('riff.gp', new Uint8Array([1]))
+    await first.library.saveEdited(song.id, new Uint8Array([1]))
+    first.library.close()
+    // As the old version kept them.
+    mkdirSync(path.join(dataDir, 'tabs'))
+    writeFileSync(path.join(dataDir, 'tabs', `${song.id}.gp`), new Uint8Array([4, 5]))
+    writeFileSync(path.join(dataDir, 'tabs', `${song.id}.edited.gp`), new Uint8Array([6]))
+    const next = createApp({ dataDir, separator: fakeSeparator().runner })
+    close = () => next.library.close()
+    const again = next.library.get(song.id)!
+    expect(await next.library.readFile(again)).toEqual(new Uint8Array([4, 5]))
+    expect(await next.library.readEdited(again)).toEqual(new Uint8Array([6]))
+    expect(existsSync(path.join(dataDir, 'tabs'))).toBe(false)
   })
 })

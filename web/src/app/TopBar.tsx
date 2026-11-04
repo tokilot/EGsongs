@@ -1,4 +1,4 @@
-import { AudioLines, CircleHelp, Library, Music, PencilLine, Plus, Save, Search, SlidersHorizontal, Star, type LucideIcon } from 'lucide-react'
+import { AudioLines, CircleHelp, Dumbbell, Library, Music, PencilLine, Plus, Save, Search, SlidersHorizontal, Star, type LucideIcon } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import * as api from '../tabs/api.ts'
 import { NewSong } from '../tabs/library/NewSong.tsx'
@@ -6,6 +6,7 @@ import { SearchPanel } from '../tabs/library/SearchPanel.tsx'
 import { SongList } from '../tabs/library/SongList.tsx'
 import { useSong } from '../tabs/library/useSong.ts'
 import { SAVE_EDITS_EVENT, useTabEditing } from '../tabs/library/useTabEditing.ts'
+import { confirmUnfavorite } from '../tabs/library/playlistQueue.ts'
 import { STEMS_HASH, TONES_HASH, useView } from '../shared/useView.ts'
 import { usePlayer } from '../tabs/player/usePlayer.ts'
 import { useLanguage } from '../shared/ui/i18n.ts'
@@ -35,7 +36,7 @@ function NavButton({ icon: Icon, label, expanded, onClick }: NavButtonProps) {
 // Left: the page switch (library home, guitar tone editor), the open song and its star. Right: my tabs, new, search, help. The layout is the user's; the
 // instrument picker lives in the control bar only (see CLAUDE.md, "顶栏").
 export function TopBar() {
-  const { state } = usePlayer()
+  const { state, player } = usePlayer()
   const { song, open, close: closeSong, replace, libraryChanged } = useSong()
   const { t } = useLanguage()
   const view = useView()
@@ -61,6 +62,7 @@ export function TopBar() {
 
   const toggleFavorite = async () => {
     if (!song) return
+    if (song.favorite && !(await confirmUnfavorite(song.id))) return
     replace(await api.updateSong(song.id, { favorite: !song.favorite }))
     libraryChanged()
   }
@@ -140,6 +142,17 @@ export function TopBar() {
               onClick={() => (editing.editing ? void editing.save() : editing.start())}
             >
               {editing.editing ? <Save size={18} aria-hidden /> : <PencilLine size={18} aria-hidden />}
+            </button>
+            {/* Practice mode (for every song): the song's practice speed, count-in, metronome and track switches. */}
+            <button
+              type="button"
+              className={styles.editButton}
+              aria-label={t('练习模式')}
+              aria-pressed={state.practiceMode}
+              title={t('练习模式')}
+              onClick={() => player.setPracticeMode(!state.practiceMode)}
+            >
+              <Dumbbell size={18} aria-hidden />
             </button>
           </div>
         </div>

@@ -21,6 +21,48 @@
   position: relative;
 }
 
+/* The "..." button at the bottom right of the bar under the mouse (practice mode): the track switch menu. */
+.barMore {
+  position: absolute;
+  z-index: 1001;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 18px;
+  padding: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  /* At the bottom left of the bar: a switch takes effect from the bar's start. */
+  transform: translate(0, -100%);
+}
+
+.barMore:hover,
+.barMore[aria-expanded='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* A track switch: a small label at the top left of its bar, over the score but not in the way of clicks. */
+.switchMark {
+  position: absolute;
+  z-index: 1001;
+  max-width: 160px;
+  padding: 1px 6px;
+  overflow: hidden;
+  background: var(--accent);
+  border-radius: 6px;
+  color: var(--accent-text);
+  font-size: 11px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+  transform: translate(0, -50%);
+}
+
 .editBeat,
 .editNote {
   position: absolute;

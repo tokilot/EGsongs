@@ -1,0 +1,95 @@
+/* "播放列表" in "my tabs"; the rows themselves are the song list's (SongList.module.css). */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.panel ul {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.panel li {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 8px;
+}
+
+.panel li:hover {
+  background: rgb(127 127 127 / 16%);
+}
+
+/* A playlist's header: back, its name, rename, delete. */
+.head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row {
+  display: flex;
+  gap: 6px;
+}
+
+.row input,
+.head input,
+.add {
+  min-width: 0;
+  height: 32px;
+  padding: 0 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.row input {
+  flex: 1;
+}
+
+.button {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px;
+  background: var(--accent);
+  border: none;
+  border-radius: 8px;
+  color: var(--accent-text);
+}
+
+.button:disabled {
+  opacity: 0.5;
+}
+
+/* The handle songs are dragged by (the whole row drags). */
+.grip {
+  display: flex;
+  flex: none;
+  padding-left: 4px;
+  color: var(--text-muted);
+  cursor: grab;
+}
+
+.dragging {
+  opacity: 0.4;
+}

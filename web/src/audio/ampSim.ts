@@ -28,6 +28,9 @@ export function levelGain(knob: number): number {
   return dbToGain((clampKnob(knob) - 5) * 2)
 }
 
+/** What the amp's master ("总音量") puts out at a knob of 50, against before: half (user, 2026-11-04). */
+export const MASTER_BASE = 0.5
+
 /** Peak level of a guitar note coming out of the synthesizer, roughly; the makeup gains keep notes there. */
 export const INPUT_PEAK = 0.35
 
@@ -395,7 +398,7 @@ function ampUnit(parts: Parts, type: string, worklets: boolean): Unit {
       // The master both drives the power stage harder and sets the level.
       power.set(dbToGain(params.master * 1.6))
       glide(presence.gain, toneDb(params.presence), ctx)
-      glide(out.gain, levelGain(params.master), ctx)
+      glide(out.gain, MASTER_BASE * levelGain(params.master), ctx)
       gate?.parameters.get('threshold')?.setValueAtTime(params.gate > 0 ? -78 + params.gate * 5 : -140, ctx.currentTime)
     },
     dispose: () => parts.dispose(),

@@ -6,11 +6,14 @@ import { TabEditor, type EditorState, type Flag } from './tabEditor.ts'
 import { applyTrackEdits, trackSetup, type TrackEdit, type TrackEdits, type TrackSetup } from './trackEdits.ts'
 import { AmpSim } from '../../audio/ampSim.ts'
 import { claimSound, releaseSound } from '../../audio/soundOwner.ts'
+import { request } from '../../shared/http.ts'
 import { cleanTrackTones, planAmpBuses, PREVIEW_CHANNELS, PREVIEW_PROGRAM, type TrackTones } from '../../audio/ampRouting.ts'
 import type { Tone, ToneFamily } from '../../audio/tone.ts'
 import { DEFAULT_TONE_LIBRARY, findTone, type ToneLibrary } from '../../tones/library.ts'
 import { beatSolfege, type NoteNames } from './solfege.ts'
 import { transposeScore } from './transpose.ts'
+import { cleanTrackSwitches, switchesFromOld, trackForBar, withTrackSwitch, type TrackSwitches } from './trackSwitches.ts'
+import { cleanTrackSounds, trackPresets, type ExtraSoundFont, type SoundFontEntry, type TrackSound, type TrackSounds } from './trackSounds.ts'
 
 export type ScoreSource =
   | { kind: 'songsterr'; info: SongInfo; tracks: unknown[] }
@@ -36,6 +39,29 @@ export interface InitialPractice {
   trackTones?: unknown
   /** A key signature picked for the note names; null or missing follows the tab. */
   key?: number | null
+  /** As stored: master bar index -> the track shown from it on (cleanTrackSwitches reads it). */
+  trackSwitchesFrom?: unknown
+  /** Stored before 2026-11-05: master bar index -> the track shown after it; read when trackSwitchesFrom is missing. */
+  trackSwitches?: unknown
+  /** As stored: track index -> a preset of an extra sound font (cleanTrackSounds reads it). */
+  trackSounds?: unknown
+}
+
+/** The practice set kept with a song; it takes effect only in practice mode. */
+export interface PracticeSet {
+  speed: number
+  countIn: boolean
+  metronome: boolean
+}
+
+const NO_PRACTICE: PracticeSet = { speed: 1, countIn: false, metronome: false }
+
+/** Where a switch's label goes on the score: the top left of its bar, in the score's own coordinates. */
+export interface SwitchMark {
+  bar: number
+  track: number
+  x: number
+  y: number
 }
 
 export interface TrackInfo {
@@ -108,7 +134,18 @@ export interface PlayerSnapshot {
   noteNames: NoteNames | null
   /** The key the note-name box reads in, picked by hand (a key signature, for the untransposed tab); null follows the tab. */
   manualKey: number | null
+  /** The track shown now; with track switches it can differ from baseTrack while playing. */
   trackIndex: number
+  /** The track picked by hand (kept with the song); the one shown before any switch. */
+  baseTrack: number
+  /** After which bars the shown track changes, and to which (kept with the song). */
+  trackSwitches: TrackSwitches
+  /** The switches' labels on the score. */
+  switchMarks: SwitchMark[]
+  /** Practice mode (global, kept in this browser): the song's practice set and track switches take effect. */
+  practiceMode: boolean
+  /** The song's practice set as kept; speed, countIn and metronome above are what is in effect now. */
+  practice: PracticeSet
   speed: number
   looping: boolean
   range: PlaybackRange | null
@@ -131,6 +168,14 @@ export interface PlayerSnapshot {
   preferences: Preferences
   /** The tones given to this song's tracks (from the library), per kind of section; kept with the song. */
   trackTones: TrackTones
+  /** Presets of extra sound fonts given to this song's tracks; kept with the song. */
+  trackSounds: TrackSounds
+  /** The sample sets the server has (data/soundfonts/), the main one marked. */
+  soundFonts: SoundFontEntry[]
+  /** The sets loaded after the main one (by hand, on the tone page), for "edit track". */
+  extraSoundFonts: ExtraSoundFont[]
+  /** The set being loaded, if any. */
+  loadingSoundFont: string | null
   barCount: number
   /** Fields the Songsterr converter did not recognise. */
   warnings: string[]
@@ -143,16 +188,18 @@ export const TRANSPOSE_MAX = 12
 
 const METRONOME_STORAGE_KEY = 'tabs.metronome'
 const PREFERENCES_STORAGE_KEY = 'tabs.preferences'
+const PRACTICE_MODE_STORAGE_KEY = 'tabs.practiceMode'
 const VOLUME_STORAGE_KEY = 'tabs.masterVolume'
 
 // The amp chains for the electric guitars. alphaTab's (patched) worklet output calls this hook each time it
 // creates its audio node, to have the guitar buses connected; see the amp bus patches in alphatab-patches.ts.
 const ampSim = new AmpSim()
 ;(globalThis as { __tabsAmpBus?: (ctx: AudioContext, node: AudioNode) => void }).__tabsAmpBus = (ctx, node) => ampSim.attach(ctx, node)
-/** A better General MIDI sample set, used when it has been downloaded (`npm run soundfont`). */
-// Downloaded by `npm run soundfont`; the first one present is used.
-const PREFERRED_SOUND_FONTS = ['sounds/GeneralUser-GS.sf2', 'sounds/FluidR3Mono_GM.sf3']
+// Better General MIDI sample sets are kept by the server (data/soundfonts/, server/src/soundFonts.ts), best first;
+// without any, the small set alphaTab ships with (copied into web/public/ by its Vite plugin).
 const BUNDLED_SOUND_FONT = 'soundfont/sonivox.sf2'
+// The instrument preview in "edit track" plays on these (the tone preview has PREVIEW_CHANNELS).
+const INSTRUMENT_PREVIEW_CHANNELS = [62, 63]
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
@@ -203,6 +250,11 @@ const EMPTY: PlayerSnapshot = {
   noteNames: null,
   manualKey: null,
   trackIndex: 0,
+  baseTrack: 0,
+  trackSwitches: {},
+  switchMarks: [],
+  practiceMode: false,
+  practice: NO_PRACTICE,
   speed: 1,
   looping: false,
   range: null,
@@ -218,6 +270,10 @@ const EMPTY: PlayerSnapshot = {
   showNotation: false,
   preferences: { fourBarsPerLine: false, showDynamics: false, loopCountIn: false },
   trackTones: {},
+  trackSounds: {},
+  soundFonts: [],
+  extraSoundFonts: [],
+  loadingSoundFont: null,
   barCount: 0,
   warnings: [],
 }
@@ -240,6 +296,9 @@ const ZOOM_BASE = 1.2
  */
 export const BACKGROUND_TRACK_LEVEL = 0.7
 
+/** Every track plays at this much of its volume slider: twice what it was (user, 2026-11-05). Previews are not lifted. */
+export const TRACK_VOLUME_BASE = 2
+
 const SANS = ['Arial', 'Helvetica Neue', 'Helvetica', 'sans-serif']
 // alphaTab's FontStyle / FontWeight enums are not exported; these are their values.
 const PLAIN = 0
@@ -257,6 +316,7 @@ export class PlayerController {
     freeMetronome: { running: false, ...cleanMetronome(readStorage(METRONOME_STORAGE_KEY, {})) },
     masterVolume: clamp(Number(readStorage(VOLUME_STORAGE_KEY, 1)), 0, 1),
     preferences: cleanPreferences(readStorage(PREFERENCES_STORAGE_KEY, {})),
+    practiceMode: readStorage<boolean>(PRACTICE_MODE_STORAGE_KEY, false) === true,
   }
   private readonly listeners = new Set<() => void>()
   /** Kept so a remount (React StrictMode, hot reload) can load the same song again. */
@@ -273,6 +333,10 @@ export class PlayerController {
   private pendingRange: PlaybackRange | null = null
   private pendingTick: number | null = null
   private pendingMixer = false
+  /** Start playing once the song being loaded is ready (the next song of a playlist). */
+  private autoplay = false
+  /** Told when a song plays to its end (not when a loop starts over). */
+  private readonly finishedListeners = new Set<() => void>()
   private countInRun: CountIn | null = null
   private readonly freeMetronome = new FreeMetronome()
   private display = { zoom: 1, showNotation: false, dark: false }
@@ -310,8 +374,21 @@ export class PlayerController {
 
   /** What survives closing a song: display options, preferences, volume and the stand-alone metronome. */
   private blank(): PlayerSnapshot {
-    const { freeMetronome, masterVolume, preferences, canPreview, previewingTone } = this.snapshot
-    return { ...EMPTY, zoom: this.display.zoom, showNotation: this.display.showNotation, freeMetronome, masterVolume, preferences, canPreview, previewingTone }
+    const { freeMetronome, masterVolume, preferences, canPreview, previewingTone, practiceMode, soundFonts, extraSoundFonts, loadingSoundFont } = this.snapshot
+    return {
+      ...EMPTY,
+      zoom: this.display.zoom,
+      showNotation: this.display.showNotation,
+      freeMetronome,
+      masterVolume,
+      preferences,
+      canPreview,
+      previewingTone,
+      practiceMode,
+      soundFonts,
+      extraSoundFonts,
+      loadingSoundFont,
+    }
   }
 
   /** `element` receives the rendered score; `scrollElement` is the scrolling ancestor the cursor is kept visible in. */
@@ -363,12 +440,15 @@ export class PlayerController {
     // The layout worker sends the new bounds only after renderFinished; until then they are the old layout's.
     api.postRenderFinished.on(() => {
       this.measuredSpacing = null
+      this.measureSwitchMarks()
       if (this.snapshot.editing) this.publishEditing(true)
       // Another track, transposition or song: read the cursor's beat again.
       else this.showNoteNames(this.beatAtCursor())
     })
     api.playedBeatChanged.on((beat) => {
-      if (!this.snapshot.editing) this.showNoteNames(beat)
+      if (this.snapshot.editing) return
+      this.showNoteNames(beat)
+      this.followTrackSwitches(beat.voice.bar.masterBar.index)
     })
     api.soundFontLoaded.on(() => this.update({ canPreview: true }))
     api.playerReady.on(() => {
@@ -379,6 +459,8 @@ export class PlayerController {
       const playing = event.state === alphaTab.synth.PlayerState.Playing
       // The song starting cancels the tone sample (alphaTab drops a one-time file when the song plays).
       if (playing) this.endTonePreview()
+      // Playback (re)starting: the first bar played decides the track again.
+      if (playing) this.switchBar = null
       // While our own count-in runs alphaTab is paused, but the user is "playing".
       this.update({ playing: playing || this.countInRun !== null, sounding: playing ? this.snapshot.sounding : [] })
     })
@@ -410,28 +492,69 @@ export class PlayerController {
     this.api = null
   }
 
-  // Use a larger sample set when one is there, otherwise the small one that ships with alphaTab.
+  // The main set (the server's first General MIDI set, otherwise the small one that ships with alphaTab) is loaded
+  // at the start; the server's other sets only when asked for on the tone page (loadExtraSoundFont). After a
+  // remount the ones already loaded come back.
   private async loadSoundFont(api: alphaTab.AlphaTabApi) {
     if (this.soundFont === null) {
-      // The dev server answers a missing file with the page itself, hence the content type check.
-      const exists = (url: string) =>
-        fetch(url, { method: 'HEAD' })
-          .then((response) => response.ok && !(response.headers.get('content-type') ?? '').includes('text/html'))
-          .catch(() => false)
       let chosen = `${import.meta.env.BASE_URL}${BUNDLED_SOUND_FONT}`
-      for (const candidate of PREFERRED_SOUND_FONTS) {
-        const url = `${import.meta.env.BASE_URL}${candidate}`
-        if (await exists(url)) {
-          chosen = url
-          break
-        }
+      try {
+        const fonts = await request<SoundFontEntry[]>('/api/soundfonts')
+        const main = fonts.find((font) => font.main)
+        if (main) chosen = `/api/soundfonts/${encodeURIComponent(main.name)}`
+        this.update({ soundFonts: fonts })
+      } catch {
+        // The server is not reachable: the bundled set still plays.
       }
       this.soundFont = chosen
     }
     if (this.api !== api) return
     const response = await fetch(this.soundFont)
     const bytes = new Uint8Array(await response.arrayBuffer())
-    if (this.api === api) api.loadSoundFont(bytes, false)
+    if (this.api !== api) return
+    api.loadSoundFont(bytes, false)
+    for (const font of this.snapshot.extraSoundFonts) {
+      const extra = await fetch(`/api/soundfonts/${encodeURIComponent(font.name)}`)
+      if (!extra.ok || this.api !== api) continue
+      const extraBytes = new Uint8Array(await extra.arrayBuffer())
+      if (this.api === api) api.loadSoundFont(extraBytes, true)
+    }
+  }
+
+  /**
+   * Loads one of the server's other sample sets after the main one (it stays loaded until the page is reloaded):
+   * its presets can then be tried and given to tracks. A song open with tracks given its presets plays them.
+   */
+  async loadExtraSoundFont(name: string) {
+    const api = this.api
+    const font = this.snapshot.soundFonts.find((item) => item.name === name)
+    if (!api || !font || font.main || font.bank === undefined || this.snapshot.loadingSoundFont) return
+    if (this.snapshot.extraSoundFonts.some((item) => item.name === name)) return
+    this.update({ loadingSoundFont: name })
+    try {
+      const response = await fetch(`/api/soundfonts/${encodeURIComponent(name)}`)
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const bytes = new Uint8Array(await response.arrayBuffer())
+      if (this.api !== api) return
+      // The routes go first: the synthesizer loads the samples of the programs they play when the set arrives.
+      this.update({ extraSoundFonts: [...this.snapshot.extraSoundFonts, { name, bank: font.bank, kind: font.kind, presets: font.presets }] })
+      this.sendAmpRouting()
+      api.loadSoundFont(bytes, true)
+      // An open song picks its tracks' presets at its program changes.
+      if (Object.keys(this.snapshot.trackSounds).length > 0) this.reloadMidi()
+    } catch (error) {
+      console.error('Could not load the sound font', name, error)
+    } finally {
+      this.update({ loadingSoundFont: null })
+    }
+  }
+
+  /** Plays a preset of a sample set on the instrument preview: the main set's by program, another's once loaded. */
+  previewPreset(name: string, program: number, tuning: number[]) {
+    const font = this.snapshot.soundFonts.find((item) => item.name === name)
+    if (!font) return
+    if (font.main) this.previewInstrument(program, tuning)
+    else this.previewInstrument(program, tuning, { font: name, program })
   }
 
   // The loop range, the position and the mixer can only be put back once the score is laid out (alphaTab draws
@@ -457,10 +580,16 @@ export class PlayerController {
       this.pendingTick = null
       api.tickPosition = tick
     }
+    if (this.autoplay && this.snapshot.canPlay && !this.snapshot.playing) {
+      this.autoplay = false
+      this.playPause()
+    }
   }
 
-  load(source: ScoreSource, practice: InitialPractice = {}) {
+  /** Opens a song; with `autoplay` it starts playing (with the count-in, if set) as soon as it is ready. */
+  load(source: ScoreSource, practice: InitialPractice = {}, autoplay = false) {
     this.pending = { source, practice }
+    this.autoplay = autoplay
     const api = this.api
     if (!api) return
     this.cancelCountIn()
@@ -473,7 +602,8 @@ export class PlayerController {
     this.pendingTick = null
     // Every track of the new song gets its volume set once it is loaded (the shown one a little louder).
     this.pendingMixer = true
-    this.update({ ...this.blank(), canPlay: this.snapshot.canPlay, status: 'loading', trackIndex: Math.max(0, practice.trackIndex ?? 0) })
+    const firstTrack = Math.max(0, practice.trackIndex ?? 0)
+    this.update({ ...this.blank(), canPlay: this.snapshot.canPlay, status: 'loading', trackIndex: firstTrack, baseTrack: firstTrack })
     try {
       let original: alphaTab.model.Score
       if (source.kind === 'songsterr') {
@@ -490,7 +620,18 @@ export class PlayerController {
       const transpose = clamp(Math.round(practice.transpose ?? 0), TRANSPOSE_MIN, TRANSPOSE_MAX)
       const shown = transpose === 0 ? { score: this.baseScore, outOfRange: 0 } : transposeScore(this.baseScore, transpose, api.settings)
       const manualKey = typeof practice.key === 'number' && Number.isInteger(practice.key) && Math.abs(practice.key) <= 7 ? practice.key : null
-      this.update({ transpose, transposeOutOfRange: shown.outOfRange, trackEdits, manualKey, trackTones: cleanTrackTones(practice.trackTones) })
+      this.update({
+        transpose,
+        transposeOutOfRange: shown.outOfRange,
+        trackEdits,
+        manualKey,
+        trackTones: cleanTrackTones(practice.trackTones),
+        trackSounds: cleanTrackSounds(practice.trackSounds),
+        trackSwitches: cleanTrackSwitches(practice.trackSwitchesFrom ?? switchesFromOld(practice.trackSwitches), {
+          bars: original.masterBars.length,
+          tracks: original.tracks.length,
+        }),
+      })
       // Before the MIDI reaches the worker, so the toned tracks load the samples their routes play.
       this.sendAmpRouting(shown.score)
       this.renderPending = true
@@ -509,6 +650,7 @@ export class PlayerController {
   /** Closes the current song and clears the score area. */
   clear() {
     this.pending = null
+    this.autoplay = false
     this.originalScore = null
     this.baseScore = null
     this.pendingRange = null
@@ -552,7 +694,7 @@ export class PlayerController {
   }
 
   private effectiveVolume(info: TrackInfo): number {
-    return info.volume * (info.index === this.snapshot.trackIndex ? 1 : BACKGROUND_TRACK_LEVEL)
+    return TRACK_VOLUME_BASE * info.volume * (info.index === this.snapshot.trackIndex ? 1 : BACKGROUND_TRACK_LEVEL)
   }
 
   private onScoreLoaded(score: alphaTab.model.Score) {
@@ -567,9 +709,14 @@ export class PlayerController {
     }
     const practice = this.pending?.practice ?? {}
     const trackIndex = clamp(practice.trackIndex ?? this.snapshot.trackIndex, 0, Math.max(0, score.tracks.length - 1))
-    const speed = clamp(practice.speed ?? 1, SPEED_MIN, SPEED_MAX)
+    const kept: PracticeSet = {
+      speed: clamp(practice.speed ?? 1, SPEED_MIN, SPEED_MAX),
+      countIn: practice.countIn ?? false,
+      metronome: practice.metronome ?? false,
+    }
+    // Out of practice mode the song plays plainly; its practice set stays kept for when the mode is on.
+    const { speed, countIn, metronome } = this.snapshot.practiceMode ? kept : NO_PRACTICE
     const looping = practice.looping ?? false
-    const metronome = practice.metronome ?? false
 
     api.playbackSpeed = speed
     // With a count-in between loops the player stops at the end of the loop and we restart it (onPlayerFinished).
@@ -593,10 +740,12 @@ export class PlayerController {
       })),
       sounding: [],
       trackIndex,
+      baseTrack: trackIndex,
       speed,
       looping,
-      countIn: practice.countIn ?? false,
+      countIn,
       metronome,
+      practice: kept,
     })
   }
 
@@ -625,7 +774,12 @@ export class PlayerController {
     resources.barNumberColor = color(colors.barNumber)
     resources.tablatureFont = font(13, BOLD)
     resources.graceFont = font(10, BOLD)
-    resources.effectFont = font(11)
+    // Effects upright (alphaTab writes them in italic serif; the user asked for upright). Text written on the score
+    // (text, lyrics, chord names, capo...) keeps its italic.
+    const E = alphaTab.NotationElement
+    for (const element of [E.EffectTap, E.EffectPalmMute, E.EffectLetRing, E.EffectBeatBarre, E.EffectHarmonics, E.EffectPickSlide, E.EffectRasgueado, E.EffectWhammyBar, E.EffectHammerOnPullOffText, E.EffectSlideText]) {
+      resources.elementFonts.set(element, font(11))
+    }
     resources.markerFont = font(13, BOLD)
     resources.barNumberFont = font(11)
     resources.titleFont = font(26, BOLD)
@@ -680,8 +834,20 @@ export class PlayerController {
   // Reached the end of the loop with "count-in between loops" on: alphaTab is not looping by itself in that
   // mode, so it has stopped at the start of the range; count in and go again.
   private onPlayerFinished(api: alphaTab.AlphaTabApi) {
-    if (!this.snapshot.looping || !this.snapshot.preferences.loopCountIn || this.api !== api) return
-    this.startCountIn(api)
+    if (this.api !== api) return
+    if (!this.snapshot.looping) {
+      for (const listener of this.finishedListeners) listener()
+      return
+    }
+    if (this.snapshot.preferences.loopCountIn) this.startCountIn(api)
+  }
+
+  /** Calls `listener` whenever a song plays to its end (not while looping); returns the unsubscribe. */
+  onFinished(listener: () => void): () => void {
+    this.finishedListeners.add(listener)
+    return () => {
+      this.finishedListeners.delete(listener)
+    }
   }
 
   playPause() {
@@ -741,7 +907,7 @@ export class PlayerController {
   setSpeed(speed: number) {
     const value = clamp(Math.round(speed * 100) / 100, SPEED_MIN, SPEED_MAX)
     if (this.api) this.api.playbackSpeed = value
-    this.update({ speed: value })
+    this.update({ speed: value, practice: { ...this.snapshot.practice, speed: value } })
   }
 
   setLooping(looping: boolean) {
@@ -760,13 +926,31 @@ export class PlayerController {
 
   setCountIn(countIn: boolean) {
     if (!countIn) this.cancelCountIn()
-    this.update({ countIn })
+    this.update({ countIn, practice: { ...this.snapshot.practice, countIn } })
   }
 
   /** The click that follows the song while it plays. */
   setMetronome(metronome: boolean) {
     if (this.api) this.api.metronomeVolume = metronome ? 1 : 0
-    this.update({ metronome })
+    this.update({ metronome, practice: { ...this.snapshot.practice, metronome } })
+  }
+
+  /**
+   * Practice mode on: the song's practice set (speed, count-in, the metronome that follows it) and its track switches
+   * take effect. Off: plain playback at full speed, and the track picked by hand. Remembered in this browser.
+   */
+  setPracticeMode(on: boolean) {
+    if (on === this.snapshot.practiceMode) return
+    writeStorage(PRACTICE_MODE_STORAGE_KEY, on)
+    const { speed, countIn, metronome } = on ? this.snapshot.practice : NO_PRACTICE
+    if (!countIn) this.cancelCountIn()
+    if (this.api) {
+      this.api.playbackSpeed = speed
+      this.api.metronomeVolume = metronome ? 1 : 0
+    }
+    this.update({ practiceMode: on, speed, countIn, metronome })
+    this.switchBar = null
+    if (!on) this.showTrack(this.snapshot.baseTrack)
   }
 
   /** Overall volume, 0..1, for every track at once. Remembered across songs and visits. */
@@ -891,13 +1075,21 @@ export class PlayerController {
     return { notesMoved }
   }
 
-  /** Plays the open strings and then a strum on the given instrument, so a sound can be tried before applying. */
-  previewInstrument(program: number, tuning: number[]) {
+  /**
+   * Plays the open strings and then a strum on the given instrument (a General MIDI program, or a preset of an extra
+   * sound font), so a sound can be tried before applying.
+   */
+  previewInstrument(program: number, tuning: number[], sound: TrackSound | null = null) {
     const api = this.api
     const player = api?.player
-    if (!api || !player || !this.snapshot.canPlay || api.playerState === alphaTab.synth.PlayerState.Playing) return
+    // The sound font is enough (the tone page tries presets without a song open).
+    if (!api || !player || !this.snapshot.canPreview || api.playerState === alphaTab.synth.PlayerState.Playing) return
     const midiFile = new alphaTab.midi.MidiFile()
-    const generator = new alphaTab.midi.MidiFileGenerator(buildPreviewScore(program, tuning), api.settings, new alphaTab.midi.AlphaSynthMidiFileHandler(midiFile))
+    const preset = sound ? trackPresets(this.snapshot.extraSoundFonts, { 0: sound })[0] : undefined
+    // Channels no track uses, so the routes of the tracks' tones and presets leave the preview alone.
+    const score = buildPreviewScore(preset?.program ?? program, tuning, INSTRUMENT_PREVIEW_CHANNELS)
+    if (preset) score.tracks[0].playbackInfo.bank = preset.bank
+    const generator = new alphaTab.midi.MidiFileGenerator(score, api.settings, new alphaTab.midi.AlphaSynthMidiFileHandler(midiFile))
     generator.generate()
     this.playOneTime(midiFile)
   }
@@ -913,7 +1105,14 @@ export class PlayerController {
   }
 
   /** Shows another track of the same song; playback and cursor position are kept. */
+  /** Picks the track by hand: it is kept with the song, and shown wherever no track switch says otherwise. */
   selectTrack(index: number) {
+    if (!this.api || !this.track(index)) return
+    if (index !== this.snapshot.baseTrack) this.update({ baseTrack: index })
+    this.showTrack(index)
+  }
+
+  private showTrack(index: number) {
     const track = this.track(index)
     if (!this.api || !track || index === this.snapshot.trackIndex) return
     this.api.renderTracks([track])
@@ -921,6 +1120,64 @@ export class PlayerController {
     // The newly shown track becomes the louder one.
     this.applyMixer()
     if (this.snapshot.editing) this.publishEditing(false)
+  }
+
+  // ---- track switches ----
+
+  // The master bar the shown track was last decided for, while playing (null: decide again at the next beat).
+  private switchBar: number | null = null
+
+  // While playing (not editing), each new bar shows the track the switches give it.
+  private followTrackSwitches(bar: number) {
+    if (!this.snapshot.practiceMode || bar === this.switchBar || Object.keys(this.snapshot.trackSwitches).length === 0) return
+    this.switchBar = bar
+    const wanted = trackForBar(this.snapshot.trackSwitches, bar, this.snapshot.baseTrack)
+    if (wanted !== this.snapshot.trackIndex) this.showTrack(wanted)
+  }
+
+  /** From bar `bar` (a master bar index) on show `track`, or no longer switch there (null). */
+  setTrackSwitch(bar: number, track: number | null) {
+    if (bar < 0 || bar >= this.snapshot.barCount || (track !== null && !this.track(track))) return
+    this.update({ trackSwitches: withTrackSwitch(this.snapshot.trackSwitches, bar, track) })
+    this.switchBar = null
+    this.measureSwitchMarks()
+  }
+
+  /** The master bar under a point of the page, or null (between lines, off the score). */
+  barAt(clientX: number, clientY: number): number | null {
+    const lookup = this.api?.boundsLookup
+    const host = this.host
+    if (!lookup || !host) return null
+    const origin = host.getBoundingClientRect()
+    const x = clientX - origin.left
+    const y = clientY - origin.top
+    for (const system of lookup.staffSystems) {
+      const line = system.realBounds
+      if (y < line.y || y > line.y + line.h) continue
+      for (const bar of system.bars) {
+        const bounds = bar.realBounds
+        if (x >= bounds.x && x <= bounds.x + bounds.w) return bar.index
+      }
+    }
+    return null
+  }
+
+  /** A master bar's box on the score (its own coordinates), for the button at its end. */
+  barBox(bar: number): { x: number; y: number; w: number; h: number } | null {
+    const bounds = this.api?.boundsLookup?.findMasterBarByIndex(bar)?.realBounds
+    return bounds ? { x: bounds.x, y: bounds.y, w: bounds.w, h: bounds.h } : null
+  }
+
+  private measureSwitchMarks() {
+    const lookup = this.api?.boundsLookup
+    const marks: SwitchMark[] = []
+    if (lookup) {
+      for (const [key, track] of Object.entries(this.snapshot.trackSwitches)) {
+        const bounds = lookup.findMasterBarByIndex(Number(key))?.realBounds
+        if (bounds) marks.push({ bar: Number(key), track, x: bounds.x, y: bounds.y })
+      }
+    }
+    this.update({ switchMarks: marks })
   }
 
   // ---- tab editor ----
@@ -1118,7 +1375,8 @@ export class PlayerController {
       isPercussion: track.isPercussion,
       channels: [track.playbackInfo.primaryChannel, track.playbackInfo.secondaryChannel],
     }))
-    const plan = planAmpBuses(tracks, this.snapshot.trackTones, (id) => findTone(this.toneLibrary, id), this.editedTone)
+    const presets = trackPresets(this.snapshot.extraSoundFonts, this.snapshot.trackSounds)
+    const plan = planAmpBuses(tracks, this.snapshot.trackTones, (id) => findTone(this.toneLibrary, id), this.editedTone, presets)
     // api.player is a wrapper; the worker belongs to the synthesizer API inside it (created with the AlphaTabApi).
     const worker = (this.api?.player as unknown as { instance?: { worker?: Worker } } | null)?.instance?.worker
     worker?.postMessage({ cmd: 'tabs.setAmpRouting', routing: plan.routing, buses: plan.buses.length })
@@ -1207,6 +1465,19 @@ export class PlayerController {
     if (id) trackTones[index] = id
     else delete trackTones[index]
     this.update({ trackTones })
+    this.sendAmpRouting()
+    this.reloadMidi()
+  }
+
+  /**
+   * The preset of an extra sound font a track plays (null for none: it plays its instrument from the General MIDI
+   * set, or its tone). Like a tone, it is picked at the program changes, so the MIDI is loaded again.
+   */
+  setTrackSound(index: number, sound: TrackSound | null) {
+    const trackSounds = { ...this.snapshot.trackSounds }
+    if (sound) trackSounds[index] = sound
+    else delete trackSounds[index]
+    this.update({ trackSounds })
     this.sendAmpRouting()
     this.reloadMidi()
   }
@@ -1374,7 +1645,7 @@ export class PlayerController {
     if (this.api && track && info) this.api.changeTrackVolume([track], this.effectiveVolume(info))
   }
 
-  /** The volume the synthesizer plays a track at, including the lift of the shown track. For the checks. */
+  /** The volume the synthesizer plays a track at, with the base and the lift of the shown track. For the checks. */
   effectiveTrackVolume(index: number): number {
     const info = this.snapshot.tracks.find((item) => item.index === index)
     return info ? this.effectiveVolume(info) : 0

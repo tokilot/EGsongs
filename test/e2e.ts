@@ -121,7 +121,7 @@ async function cursorPosition(page: Page): Promise<string> {
 }
 
 async function main() {
-  start('node', ['src/index.ts'], path.join(root, 'server'), { TABS_PORT: String(API_PORT), TABS_DATA_DIR: dataDir })
+  start('node', ['src/index.ts'], path.join(root, 'server'), { TABS_PORT: String(API_PORT), TABS_DATA_DIR: dataDir, TABS_SOUNDFONTS: path.join(root, 'data/soundfonts') })
   start('npx', ['vite', '--port', String(WEB_PORT), '--strictPort'], path.join(root, 'web'), { TABS_PORT: String(API_PORT) })
   await waitFor(`http://127.0.0.1:${API_PORT}/api/songs`)
   await waitFor(BASE)
@@ -131,6 +131,8 @@ async function main() {
   const page = await context.newPage()
   page.setDefaultTimeout(12_000)
   const pageErrors: string[] = []
+  const requested: string[] = []
+  page.on('request', (request) => requested.push(new URL(request.url()).pathname))
   // With where it happened, so a failure can be traced from this log alone.
   page.on('pageerror', (error) => {
     const where = (error.stack ?? '').split('\n').slice(1, 4).map((line) => line.trim().replace(/https?:\/\/localhost:\d+/, '')).join(' < ')
@@ -361,6 +363,90 @@ async function main() {
     await page.locator('footer button[aria-label="播放"]').waitFor()
     await page.keyboard.press('Home')
     await page.waitForTimeout(400)
+  })
+  await check('practice mode: a "..." button at the start of a bar sets a track switch; playing into it shows that track, going back brings the first back', async () => {
+    type Switching = {
+      __tabsPlayer: {
+        getSnapshot(): { trackIndex: number; baseTrack: number; trackSwitches: Record<string, number>; tracks: Array<{ index: number; name: string }>; playing: boolean; switchMarks: unknown[]; practiceMode: boolean; speed: number; practice: { speed: number } }
+        playPause(): void
+        setSpeed(speed: number): void
+        api: { tickPosition: number; boundsLookup: { findMasterBarByIndex(index: number): { realBounds: { x: number; y: number; w: number; h: number } } | null }; container: { element: HTMLElement } }
+      }
+    }
+    const snapshot = () => page.evaluate(() => (window as unknown as Switching).__tabsPlayer.getSnapshot())
+    const before = await snapshot()
+    const base = before.trackIndex
+    const target = before.tracks.find((track) => track.index !== base)!
+    // Out of practice mode there is no "..." button on the bars.
+    const practiceButton = page.locator('header').getByRole('button', { name: '练习模式' })
+    assert((await practiceButton.getAttribute('aria-pressed')) === 'false', 'practice mode should start off')
+    // The middle of the second bar, where the mouse goes.
+    const point = await page.evaluate(() => {
+      const player = (window as unknown as Switching).__tabsPlayer
+      const bounds = player.api.boundsLookup.findMasterBarByIndex(1)!.realBounds
+      const origin = player.api.container.element.getBoundingClientRect()
+      return { x: origin.left + bounds.x + bounds.w / 2, y: origin.top + bounds.y + bounds.h / 2 }
+    })
+    const more = page.getByRole('button', { name: '从第 2 小节开始切换音轨' })
+    await page.mouse.move(point.x, point.y)
+    await page.waitForTimeout(200)
+    assert((await more.count()) === 0, 'the "..." button shows out of practice mode')
+    await practiceButton.click()
+    assert((await practiceButton.getAttribute('aria-pressed')) === 'true', 'practice mode did not turn on')
+    // Over a bar, a "..." button at its bottom left; it opens the menu.
+    await page.mouse.move(point.x + 1, point.y)
+    await more.waitFor()
+    await shot(page, '04a-bar-more')
+    await more.click()
+    const menu = page.getByRole('menu', { name: '音轨切换' })
+    await menu.getByText('从第 2 小节开始切换到：').waitFor()
+    // By position: several tracks can have the same name.
+    await menu.getByRole('menuitemradio').nth(target.index).click()
+    await menu.waitFor({ state: 'detached' })
+    const set = await snapshot()
+    assert(set.trackSwitches['1'] === target.index && set.switchMarks.length === 1, `the switch was not set: ${JSON.stringify(set.trackSwitches)}`)
+    await page.locator('main [class*="switchMark"]').filter({ hasText: target.name }).waitFor()
+    await shot(page, '04b-track-switch')
+
+    // Playing from the start: the second bar shows the target track; back at the start, the first track again.
+    await page.evaluate(() => {
+      const player = (window as unknown as Switching).__tabsPlayer
+      player.api.tickPosition = 0
+      player.playPause()
+    })
+    await page.waitForFunction((index) => (window as unknown as Switching).__tabsPlayer.getSnapshot().trackIndex === index, target.index, { timeout: 15_000 })
+    const switched = await snapshot()
+    assert(switched.playing && switched.baseTrack === base, `switching should keep playing and keep the picked track (${JSON.stringify({ playing: switched.playing, base: switched.baseTrack })})`)
+    await page.evaluate(() => ((window as unknown as Switching).__tabsPlayer.api.tickPosition = 0))
+    await page.waitForFunction((index) => (window as unknown as Switching).__tabsPlayer.getSnapshot().trackIndex === index, base, { timeout: 5_000 })
+    await page.evaluate(() => (window as unknown as Switching).__tabsPlayer.playPause())
+    await page.locator('footer button[aria-label="播放"]').waitFor()
+
+    // Kept with the song (the track picked by hand, not the one switched to).
+    await page.waitForTimeout(900)
+    const songId = new URL(page.url()).hash.split('/').at(-1)
+    const stored = ((await (await fetch(`http://127.0.0.1:${API_PORT}/api/songs/${songId}`)).json()) as { settings: { trackSwitchesFrom?: Record<string, number>; trackIndex?: number } }).settings
+    assert(stored.trackSwitchesFrom?.['1'] === target.index && stored.trackIndex === base, `not kept with the song: ${JSON.stringify(stored)}`)
+
+    // Practice mode off: plain playback and no labels, the practice speed still kept; on again, it is back.
+    await page.evaluate(() => (window as unknown as Switching).__tabsPlayer.setSpeed(0.8))
+    await practiceButton.click()
+    await page.locator('main [class*="switchMark"]').waitFor({ state: 'detached' })
+    const off = await snapshot()
+    assert(!off.practiceMode && off.speed === 1 && off.practice.speed === 0.8 && off.trackSwitches['1'] === target.index, `practice mode off: ${JSON.stringify({ speed: off.speed, kept: off.practice.speed })}`)
+    await practiceButton.click()
+    await page.locator('main [class*="switchMark"]').waitFor()
+    assert((await snapshot()).speed === 0.8, 'the practice speed did not come back')
+    await page.evaluate(() => (window as unknown as Switching).__tabsPlayer.setSpeed(1))
+
+    // Taken away again from the same menu (the checks after this one expect no switches; practice mode stays on).
+    await page.mouse.move(point.x, point.y)
+    await more.click()
+    await menu.getByRole('menuitem', { name: '取消这里的切换' }).click()
+    await page.locator('main [class*="switchMark"]').waitFor({ state: 'detached' })
+    assert(Object.keys((await snapshot()).trackSwitches).length === 0, 'the switch is still there')
+    await page.mouse.move(5, 5)
+    await page.evaluate(() => ((window as unknown as Switching).__tabsPlayer.api.tickPosition = 0))
   })
   await check('arrow keys step by bars', async () => {
     const start = await cursorPosition(page)
@@ -696,7 +782,8 @@ async function main() {
       const state = player.getSnapshot()
       return state.tracks.map((track) => ({ shown: track.index === state.trackIndex, level: player.effectiveTrackVolume(track.index) }))
     })
-    assert(levels.every((item) => (item.shown ? item.level === 1 : item.level < 1 && item.level > 0.5)), `levels: ${JSON.stringify(levels)}`)
+    // Every track at twice its slider (the base), the others a little under the shown one.
+    assert(levels.every((item) => (item.shown ? item.level === 2 : item.level < 2 && item.level > 1)), `levels: ${JSON.stringify(levels)}`)
     await mixer.getByLabel('主音量').fill('0.6')
     assert(Math.abs((await player()) - 0.6) < 0.01, `master volume not applied (${await player()})`)
     assert((await mixer.locator('[data-sounding]').count()) === 0, 'dots lit while stopped')
@@ -863,7 +950,7 @@ async function main() {
     // Its own page, from the switch at the left of the top bar; the song stays loaded underneath.
     const openDialog = async () => {
       await page.locator('header').getByRole('link', { name: '音色', exact: true }).click()
-      const dialog = page.getByRole('region', { name: '吉他音色编辑' })
+      const dialog = page.getByRole('region', { name: '音色编辑' })
       await dialog.waitFor()
       assert(page.url().endsWith('#/tones'), `the tone page is at ${page.url()}`)
       assert((await page.locator('header').getByRole('link', { name: '音色', exact: true }).getAttribute('aria-current')) === 'page', 'the switch should show the tone page as current')
@@ -872,7 +959,7 @@ async function main() {
     // And back to the song by its title, without loading it again.
     const backToSong = async () => {
       await page.locator('header').getByTitle('返回曲谱').click()
-      await page.getByRole('region', { name: '吉他音色编辑' }).waitFor({ state: 'detached' })
+      await page.getByRole('region', { name: '音色编辑' }).waitFor({ state: 'detached' })
       assert(/#\/song\/\d+$/.test(page.url()), `back at ${page.url()}`)
     }
     // A clean electric guitar track (the rhythm guitar), in the track editor; earlier checks may show another.
@@ -889,17 +976,16 @@ async function main() {
     const before = await levelWhilePlaying()
     assert(before < 0.0005, `a track without a tone reaches an amp (level ${before})`)
 
-    // A tone of my own in the library, from the distortion template with more gain and a delay switched on.
+    // A tone of my own in the library, a copy of Flying Cloud with more gain and a delay switched on.
     let dialog = await openDialog()
-    const list = dialog.getByRole('navigation', { name: '音色库' })
-    assert((await list.getByRole('button').count()) === 4, 'the library should list the three templates and Flying Cloud')
-    await list.getByRole('button', { name: /^失真/ }).click()
+    const list = dialog.getByRole('navigation', { name: '效果器音色库' })
+    assert((await list.getByRole('button').count()) === 1, 'the library should list only Flying Cloud (no templates)')
+    await list.getByRole('button', { name: /Flying Cloud/ }).click()
     await shot(page, '17-guitar-tones')
     const chain = dialog.getByRole('tablist', { name: '信号链' })
     assert((await chain.getByRole('tab').count()) === 9, 'the signal chain should have nine modules')
     await chain.getByRole('tab', { name: '箱头' }).click()
     await dialog.getByRole('slider', { name: '增益' }).fill('95')
-    assert(await dialog.getByText(/模板不能直接改/).isVisible(), 'changing a template should ask to save it as a new tone')
     await chain.getByRole('button', { name: '开关延迟' }).click()
     assert((await chain.getByRole('button', { name: '开关延迟' }).getAttribute('aria-pressed')) === 'true', 'the delay did not switch on')
     await chain.getByRole('tab', { name: '延迟' }).click()
@@ -912,7 +998,7 @@ async function main() {
     await dialog.getByRole('button', { name: '确定' }).click()
     await page.waitForTimeout(300)
     type Stored = { custom: Array<{ id: string; name: string; family: string; chain: { amp: { params: { gain: number } }; delay: { on: boolean; type: string } } }> }
-    // Kept by the server (data/tones.json), no longer in the browser.
+    // Kept by the server (in data/user.db), no longer in the browser.
     const stored = ((await (await fetch(`http://127.0.0.1:${API_PORT}/api/tones`)).json()) as { library: Stored | null }).library
     const saved = stored?.custom.find((tone) => tone.name === 'My lead')
     assert(saved && saved.family === 'guitar' && saved.chain.amp.params.gain === 95 && saved.chain.delay.on && saved.chain.delay.type === 'analog', `the tone was not saved with its chain: ${JSON.stringify(saved)}`)
@@ -968,10 +1054,12 @@ async function main() {
 
     // Deleted from the library: the track plays the samples again.
     dialog = await openDialog()
-    await dialog.getByRole('navigation', { name: '音色库' }).getByRole('button', { name: 'My lead' }).click()
+    await dialog.getByRole('navigation', { name: '效果器音色库' }).getByRole('button', { name: 'My lead' }).click()
     await dialog.getByRole('button', { name: '删除' }).click()
     await page.waitForTimeout(300)
-    assert((await dialog.getByRole('navigation', { name: '音色库' }).getByRole('button', { name: 'My lead' }).count()) === 0, 'the tone is still listed')
+    assert((await dialog.getByRole('navigation', { name: '效果器音色库' }).getByRole('button', { name: 'My lead' }).count()) === 0, 'the tone is still listed')
+    // The last tone left cannot be deleted.
+    assert(await dialog.getByRole('button', { name: '删除' }).isDisabled(), 'the last tone can be deleted')
     await backToSong()
     const after = await levelWhilePlaying()
     assert(after < 0.0005, `after deleting the tone the track still reaches an amp (level ${after})`)
@@ -1039,7 +1127,7 @@ async function main() {
   // A separation put straight into the data directory (sine tones standing in for the model's stems, as WAV in
   // .flac files: the browser goes by the content). What reaches the speakers is measured on a tap in front of them.
   async function stemPlayback() {
-    const dir = path.join(dataDir, 'stems', 'e2estems')
+    const dir = path.join(dataDir, 'tmps', 'stems', 'e2estems')
     mkdirSync(dir, { recursive: true })
     const stems = [
       { name: 'vocals', frequency: 0, rmsDb: -120 },
@@ -1373,7 +1461,7 @@ async function main() {
       const fresh = await plain.newPage({ locale: 'zh-CN' })
       fresh.setDefaultTimeout(12_000)
       await fresh.goto(`${BASE}/#/tones`)
-      const tones = fresh.getByRole('region', { name: '吉他音色编辑' })
+      const tones = fresh.getByRole('region', { name: '音色编辑' })
       const tryIt = tones.getByRole('button', { name: '试听' })
       // The sound font takes a moment.
       await fresh.waitForFunction(() => (window as unknown as { __tabsPlayer: { getSnapshot(): { canPreview: boolean } } }).__tabsPlayer.getSnapshot().canPreview, undefined, { timeout: 30_000 })
@@ -1474,6 +1562,14 @@ async function main() {
     await shot(page, '11-narrow')
   })
 
+  await check('the player plays the best sound font the server has (data/soundfonts/)', async () => {
+    const fonts = requested.filter((url) => /soundfont/i.test(url) && /\.sf[23]$/i.test(url))
+    if (existsSync(path.join(root, 'data/soundfonts/GeneralUser-GS.sf2'))) {
+      assert(fonts.includes('/api/soundfonts/GeneralUser-GS.sf2'), `loaded ${fonts.join(', ') || 'no sound font'}`)
+    } else {
+      assert(fonts.some((url) => url.endsWith('/soundfont/sonivox.sf2')), `loaded ${fonts.join(', ') || 'no sound font'}`)
+    }
+  })
   await check('no uncaught errors in the page', async () => {
     assert(pageErrors.length === 0, pageErrors.slice(0, 5).join(' | '))
   })

@@ -1,4 +1,4 @@
-// The tone library as the page holds it: read from the server (data/tones.json), changed by the tone page, and
+// The tone library as the page holds it: read from the server (data/user.db), changed by the tone page, and
 // offered to the tabs, whose player plays the tones given to tracks. The tabs only read it.
 import { useSyncExternalStore } from 'react'
 import type { Tone } from '../audio/tone.ts'

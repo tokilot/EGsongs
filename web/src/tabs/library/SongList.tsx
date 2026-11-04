@@ -4,6 +4,8 @@ import * as api from '../api.ts'
 import type { Song } from '../api.ts'
 import { translate, useLanguage } from '../../shared/ui/i18n.ts'
 import { useSong } from './useSong.ts'
+import { PlaylistPanel } from './PlaylistPanel.tsx'
+import { confirmUnfavorite } from './playlistQueue.ts'
 import styles from './SongList.module.css'
 
 interface SongListProps {
@@ -11,15 +13,17 @@ interface SongListProps {
   onPick?: () => void
 }
 
-/** "My tabs": everything in the library, most recently practised first, with a favourites filter. */
+/** "My tabs": everything in the library, most recently practised first, with a favourites filter; and the playlists. */
 export function SongList({ onPick }: SongListProps) {
   const { t } = useLanguage()
   const { song: current, open, close, replace, libraryVersion, libraryChanged } = useSong()
   const [songs, setSongs] = useState<Song[] | null>(null)
-  const [favoritesOnly, setFavoritesOnly] = useState(false)
+  const [view, setView] = useState<'all' | 'favorites' | 'playlists'>('all')
+  const favoritesOnly = view === 'favorites'
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
+    if (view === 'playlists') return
     let cancelled = false
     api
       .listSongs({ favorite: favoritesOnly })
@@ -34,9 +38,10 @@ export function SongList({ onPick }: SongListProps) {
     return () => {
       cancelled = true
     }
-  }, [favoritesOnly, libraryVersion])
+  }, [view, favoritesOnly, libraryVersion])
 
   const toggleFavorite = async (song: Song) => {
+    if (song.favorite && !(await confirmUnfavorite(song.id))) return
     const updated = await api.updateSong(song.id, { favorite: !song.favorite })
     if (current?.id === updated.id) replace(updated)
     libraryChanged()
@@ -52,13 +57,21 @@ export function SongList({ onPick }: SongListProps) {
   return (
     <div className={styles.list}>
       <div className={styles.filters} role="tablist" aria-label={t('筛选')}>
-        <button type="button" role="tab" aria-selected={!favoritesOnly} onClick={() => setFavoritesOnly(false)}>
+        <button type="button" role="tab" aria-selected={view === 'all'} onClick={() => setView('all')}>
           {t('全部')}
         </button>
-        <button type="button" role="tab" aria-selected={favoritesOnly} onClick={() => setFavoritesOnly(true)}>
+        <button type="button" role="tab" aria-selected={view === 'favorites'} onClick={() => setView('favorites')}>
           {t('收藏')}
         </button>
+        <button type="button" role="tab" aria-selected={view === 'playlists'} onClick={() => setView('playlists')}>
+          {t('播放列表')}
+        </button>
       </div>
+
+      {view === 'playlists' ? (
+        <PlaylistPanel onPick={onPick} />
+      ) : (
+        <>
 
       {error && <p className={styles.message}>{error}</p>}
       {!error && songs?.length === 0 && (
@@ -97,6 +110,8 @@ export function SongList({ onPick }: SongListProps) {
           </li>
         ))}
       </ul>
+        </>
+      )}
     </div>
   )
 }

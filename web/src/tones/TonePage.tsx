@@ -2,10 +2,12 @@ import { Activity, Flame, Funnel, Play, Power, Square, Repeat, SlidersHorizontal
 import { useEffect, useState } from 'react'
 import { useLanguage } from '../shared/ui/i18n.ts'
 import { TONE_FAMILIES, type Tone, type ToneFamily } from '../audio/tone.ts'
-import { allTones, findTone, newToneId } from './library.ts'
+import { allTones, findTone, FLYING_CLOUD_TONE, newToneId } from './library.ts'
 import { toneStore, useTones } from './toneStore.ts'
 import { MODULE_ORDER, MODULES, defaultModule, paramsFor, sameChain, type ModuleId, type ParamSpec, type ToneChain } from '../audio/toneChain.ts'
 import { usePlayer } from '../tabs/player/usePlayer.ts'
+import { SampleLibrary } from './SampleLibrary.tsx'
+import { soundFontTitle, useSoundFontStatus } from './soundFontStatus.ts'
 import panel from '../shared/panel.module.css'
 import styles from './TonePage.module.css'
 
@@ -31,23 +33,29 @@ function formatValue(param: ParamSpec, value: number): string {
 }
 
 /**
- * "吉他音色编辑": the personal tone library. On the left the tones (built-in templates, then the user's), on
- * the right the signal chain of the one picked, like an amp app's. Tracks are given tones from here in the track
- * editor ("编辑音轨"). A page of its own (#/tones, opened from the top bar), laid over the score area; the open
- * song stays loaded, so the control bar can play it while a tone is set.
+ * "音色编辑": on the left the sample sets (data/soundfonts/, see SampleLibrary.tsx) above the personal library of
+ * effect tones (built-in templates, then the user's); on the right the set picked, or the signal chain of the tone
+ * picked, like an amp app's. Tracks are given tones and the loaded sets' presets in the track editor ("编辑音轨").
+ * A page of its own (#/tones, opened from the top bar), laid over the score area; the open song stays loaded, so
+ * the control bar can play it while a tone is set.
  */
 export function TonePage() {
   const { state, player } = usePlayer()
   const { t } = useLanguage()
   const { library, error: libraryError } = useTones()
-  const [selectedId, setSelectedId] = useState(() => library.custom[0]?.id ?? 'distortion')
-  const tone = findTone(library, selectedId) ?? allTones(library)[0]
+  const [selectedId, setSelectedId] = useState(() => library.custom[0]?.id ?? FLYING_CLOUD_TONE.id)
+  // An empty library (only from storage: the last tone cannot be deleted) shows the starter tone, to save again.
+  const tone = findTone(library, selectedId) ?? allTones(library)[0] ?? FLYING_CLOUD_TONE
   const [draft, setDraft] = useState<ToneChain>(tone.chain)
   const [family, setFamily] = useState<ToneFamily>(tone.family)
   const [editedTone, setEditedTone] = useState(tone.id)
   const [selected, setSelected] = useState<ModuleId>('amp')
   const [naming, setNaming] = useState<'save' | 'rename' | null>(null)
   const [name, setName] = useState('')
+  // A sample set picked on the left (its name), instead of a tone; the tone's unsaved knobs stay as they are.
+  const [fontName, setFontName] = useState<string | null>(null)
+  const font = state.soundFonts.find((item) => item.name === fontName) ?? null
+  const fontStatus = useSoundFontStatus()
 
   // Another tone picked (or the picked one deleted): start from what that tone has.
   if (editedTone !== tone.id) {
@@ -65,8 +73,8 @@ export function TonePage() {
   }, [player, tone, family, draft])
   useEffect(() => () => player.setEditedTone(null), [player])
 
-  const toneName = (item: { name: string; builtIn: boolean }) => (item.builtIn ? t(item.name) : item.name)
   const pick = (id: string) => {
+    setFontName(null)
     if (id === tone.id) return
     if (dirty && !window.confirm(t('音色的修改还没保存，确认切换吗？'))) return
     setSelectedId(id)
@@ -83,7 +91,7 @@ export function TonePage() {
     const trimmed = name.trim()
     if (!trimmed) return
     if (naming === 'save') {
-      const created: Tone = { id: newToneId(), name: trimmed, family, builtIn: false, chain: draft }
+      const created: Tone = { id: newToneId(), name: trimmed, family, chain: draft }
       void toneStore.save(created)
       setSelectedId(created.id)
     } else if (naming === 'rename') {
@@ -94,7 +102,7 @@ export function TonePage() {
   const remove = () => {
     if (!window.confirm(t('确认删除音色"{name}"？', { name: tone.name }))) return
     void toneStore.remove(tone.id)
-    setSelectedId(library.custom.find((item) => item.id !== tone.id)?.id ?? 'distortion')
+    setSelectedId(library.custom.find((item) => item.id !== tone.id)?.id ?? FLYING_CLOUD_TONE.id)
   }
 
   const module = draft[selected]
@@ -102,13 +110,35 @@ export function TonePage() {
 
   return (
     <div className={styles.page}>
-      <section className={styles.content} aria-label={t('吉他音色编辑')}>
+      <section className={styles.content} aria-label={t('音色编辑')}>
         <header className={styles.pageHeader}>
-          <h1>{t('吉他音色编辑')}</h1>
+          <h1>{t('音色编辑')}</h1>
         </header>
 
         <div className={styles.libraryLayout}>
-          <nav className={styles.toneList} aria-label={t('音色库')}>
+          <div className={styles.lists}>
+          <nav className={styles.toneList} aria-label={t('采样音色库')}>
+            <h2 className={styles.listTitle}>{t('采样音色库')}</h2>
+            <div className={styles.toneGroup}>
+              <ul>
+                {state.soundFonts.map((item) => {
+                  const status = fontStatus(item)
+                  return (
+                    <li key={item.name}>
+                      <button type="button" title={item.name} aria-current={item.name === font?.name ? 'true' : undefined} onClick={() => setFontName(item.name)}>
+                        <span>{soundFontTitle(item.name)}</span>
+                        {status === 'main' && <small>{t('默认')}</small>}
+                        {status === 'loaded' && <small>{t('已加载')}</small>}
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+              {state.soundFonts.length === 0 && <p className={panel.hint}>{t('没有采样音色库，正在用内置的小音色库。')}</p>}
+            </div>
+          </nav>
+          <nav className={styles.toneList} aria-label={t('效果器音色库')}>
+            <h2 className={styles.listTitle}>{t('效果器音色库')}</h2>
             {TONE_FAMILIES.map((item) => (
               <div key={item} className={styles.toneGroup}>
                 <h3>{t(FAMILY_LABELS[item])}</h3>
@@ -117,9 +147,8 @@ export function TonePage() {
                     .filter((entry) => entry.family === item)
                     .map((entry) => (
                       <li key={entry.id}>
-                        <button type="button" aria-current={entry.id === tone.id ? 'true' : undefined} onClick={() => pick(entry.id)}>
-                          <span>{toneName(entry)}</span>
-                          {entry.builtIn && <small>{t('模板')}</small>}
+                        <button type="button" aria-current={!font && entry.id === tone.id ? 'true' : undefined} onClick={() => pick(entry.id)}>
+                          <span>{entry.name}</span>
                         </button>
                       </li>
                     ))}
@@ -127,10 +156,14 @@ export function TonePage() {
               </div>
             ))}
           </nav>
+          </div>
 
+          {font ? (
+            <SampleLibrary font={font} />
+          ) : (
           <section className={panel.section}>
             <div className={styles.toneRow}>
-              <h2 className={styles.toneTitle}>{toneName(tone)}</h2>
+              <h2 className={styles.toneTitle}>{tone.name}</h2>
               <label className={styles.typeField}>
                 <span>{t('用于')}</span>
                 <select value={family} aria-label={t('用于')} onChange={(event) => setFamily(event.target.value as ToneFamily)}>
@@ -244,48 +277,47 @@ export function TonePage() {
             </div>
           )}
           </section>
+          )}
         </div>
 
+        {!font && (
+        <>
         <footer className={panel.footer}>
           <button type="button" className={panel.secondary} disabled={!dirty} onClick={() => setDraft(tone.chain)}>
             {t('撤销修改')}
           </button>
-          {!tone.builtIn && (
-            <>
-              <button
-                type="button"
-                className={panel.secondary}
-                onClick={() => {
-                  setName(tone.name)
-                  setNaming('rename')
-                }}
-              >
-                {t('改名')}
-              </button>
-              <button type="button" className={panel.secondary} onClick={remove}>
-                {t('删除')}
-              </button>
-            </>
-          )}
+          <button
+            type="button"
+            className={panel.secondary}
+            onClick={() => {
+              setName(tone.name)
+              setNaming('rename')
+            }}
+          >
+            {t('改名')}
+          </button>
+          {/* The last tone stays: a new one is saved as a copy of one there is. */}
+          <button type="button" className={panel.secondary} disabled={library.custom.length <= 1} onClick={remove}>
+            {t('删除')}
+          </button>
           <span className={panel.spacer} />
           <button
             type="button"
             className={panel.secondary}
             onClick={() => {
-              setName(tone.builtIn ? `${t(tone.name)} 2` : `${tone.name} 2`)
+              setName(`${tone.name} 2`)
               setNaming('save')
             }}
           >
             {t('另存为…')}
           </button>
-          {!tone.builtIn && (
-            <button type="button" className={panel.primary} disabled={!dirty} onClick={saveOver}>
-              {t('保存')}
-            </button>
-          )}
+          <button type="button" className={panel.primary} disabled={!dirty} onClick={saveOver}>
+            {t('保存')}
+          </button>
         </footer>
         {libraryError && <p className={panel.message}>{t('音色库读写失败：{error}', { error: libraryError })}</p>}
-        {tone.builtIn && dirty && <p className={panel.message}>{t('模板不能直接改，请另存为其他音色。')}</p>}
+        </>
+        )}
       </section>
     </div>
   )

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -198,25 +198,13 @@ export class StemStore {
   private running = false
   private lastId = ''
 
-  constructor(dataDir: string, runner: SeparationRunner) {
-    this.dir = path.join(dataDir, 'stems')
+  /** `dir`: where the separations go (data/tmps/stems/, emptied when the server starts). */
+  constructor(dir: string, runner: SeparationRunner) {
+    this.dir = dir
     this.runner = runner
     if (!existsSync(this.dir)) return
-    for (const entry of readdirSync(this.dir)) {
-      const dir = path.join(this.dir, entry)
-      if (entry.endsWith('.work')) {
-        rmSync(dir, { recursive: true, force: true })
-        continue
-      }
-      // The first version kept one separation per song, in a directory named after the song, without an id.
-      const file = path.join(dir, 'stems.json')
-      try {
-        const set = JSON.parse(readFileSync(file, 'utf8')) as Partial<StemSet>
-        if (!set.id && ID.test(entry)) writeFileSync(file, JSON.stringify({ ...set, id: entry, name: baseName(set.sourceName ?? entry), device: set.device ?? null }, null, 2))
-      } catch {
-        // Not a separation.
-      }
-    }
+    // Half-done work of a run that stopped.
+    for (const entry of readdirSync(this.dir)) if (entry.endsWith('.work')) rmSync(path.join(this.dir, entry), { recursive: true, force: true })
   }
 
   private resultDir(id: string) {
@@ -318,14 +306,6 @@ export class StemStore {
     job.cancel?.()
     // A running one cleans up after itself when it stops.
     if (!job.cancel) await rm(job.work, { recursive: true, force: true })
-  }
-
-  /** Deletes every separation (run when the server starts: they are not kept between runs, user's choice 2026-10-31). */
-  async clear(): Promise<number> {
-    if (!existsSync(this.dir)) return 0
-    const entries = readdirSync(this.dir).filter((entry) => ID.test(entry))
-    for (const entry of entries) await this.remove(entry)
-    return entries.length
   }
 
   async remove(id: string): Promise<boolean> {

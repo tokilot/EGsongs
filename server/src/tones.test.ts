@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -22,17 +22,33 @@ function setup() {
 }
 
 describe('tone library', () => {
-  it('is null until saved, then kept in data/tones.json', async () => {
+  it('is null until saved, then kept in data/user.db', async () => {
     const app = setup()
     expect(await (await app.request('/api/tones')).json()).toEqual({ library: null })
     const library = { version: 5, custom: [{ id: 'mine', name: 'Mine' }] }
     const saved = await app.request('/api/tones', { method: 'PUT', body: JSON.stringify(library) })
     expect(saved.status).toBe(200)
     expect(await (await app.request('/api/tones')).json()).toEqual({ library })
-    expect(JSON.parse(readFileSync(path.join(dataDir, 'tones.json'), 'utf8'))).toEqual(library)
+    expect(existsSync(path.join(dataDir, 'user.db'))).toBe(true)
+    expect(existsSync(path.join(dataDir, 'tones.json'))).toBe(false)
     // A new server reads it back.
     close?.()
     expect(await (await setup().request('/api/tones')).json()).toEqual({ library })
+  })
+
+  it('takes in the tones.json and the library.db of before, once', async () => {
+    // A library.db as the old version left it (with a song in it), and its tones.json.
+    const first = createApp({ dataDir })
+    await first.library.addFile('kept.gp', new Uint8Array([1]))
+    first.library.close()
+    renameSync(path.join(dataDir, 'user.db'), path.join(dataDir, 'library.db'))
+    const library = { custom: [{ id: 'old', name: 'Old' }], presetVersion: 5 }
+    writeFileSync(path.join(dataDir, 'tones.json'), JSON.stringify(library))
+    const app = setup()
+    expect(await (await app.request('/api/tones')).json()).toEqual({ library })
+    expect(((await (await app.request('/api/songs')).json()) as Array<{ title: string }>).map((song) => song.title)).toEqual(['kept'])
+    expect(existsSync(path.join(dataDir, 'library.db'))).toBe(false)
+    expect(existsSync(path.join(dataDir, 'tones.json'))).toBe(false)
   })
 
   it('keeps the last of quick saves', async () => {

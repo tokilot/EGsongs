@@ -1,0 +1,99 @@
+import type { DatabaseSync } from 'node:sqlite'
+
+/** A playlist: a named group of favourite songs, in the order they are played. */
+export interface Playlist {
+  id: number
+  name: string
+  /** The songs, in playing order. */
+  songIds: number[]
+}
+
+const SCHEMA = `
+CREATE TABLE IF NOT EXISTS playlists (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS playlist_songs (
+  playlist_id INTEGER NOT NULL,
+  song_id INTEGER NOT NULL,
+  position INTEGER NOT NULL,
+  PRIMARY KEY (playlist_id, song_id)
+);
+`
+
+export const MAX_PLAYLIST_NAME = 60
+
+/**
+ * Playlists ("播放列表", 2026-11-05), in data/user.db next to the songs. Only favourites go in (the others are gone
+ * at the next start of the server); a song that stops being a favourite, or is deleted, leaves every playlist.
+ */
+export class Playlists {
+  private readonly db: DatabaseSync
+
+  constructor(db: DatabaseSync) {
+    this.db = db
+    this.db.exec(SCHEMA)
+  }
+
+  /** Every playlist, oldest first, with its songs in order (only songs that are still favourites). */
+  list(): Playlist[] {
+    const playlists = this.db.prepare('SELECT id, name FROM playlists ORDER BY id').all() as unknown as Array<{ id: number; name: string }>
+    const entries = this.db
+      .prepare(
+        `SELECT playlist_songs.playlist_id AS playlistId, playlist_songs.song_id AS songId FROM playlist_songs
+         JOIN songs ON songs.id = playlist_songs.song_id AND songs.favorite = 1
+         ORDER BY playlist_songs.position`,
+      )
+      .all() as unknown as Array<{ playlistId: number; songId: number }>
+    return playlists.map(({ id, name }) => ({ id, name, songIds: entries.filter((entry) => entry.playlistId === id).map((entry) => entry.songId) }))
+  }
+
+  get(id: number): Playlist | null {
+    return this.list().find((playlist) => playlist.id === id) ?? null
+  }
+
+  create(name: string): Playlist {
+    const result = this.db.prepare('INSERT INTO playlists (name, created_at) VALUES (?, ?)').run(cleanName(name), new Date().toISOString())
+    return this.get(Number(result.lastInsertRowid))!
+  }
+
+  rename(id: number, name: string): Playlist | null {
+    this.db.prepare('UPDATE playlists SET name = ? WHERE id = ?').run(cleanName(name), id)
+    return this.get(id)
+  }
+
+  /** The playlist's songs, in this order: favourites only, each once. */
+  setSongs(id: number, songIds: number[]): Playlist | null {
+    if (!this.get(id)) return null
+    const favorites = new Set((this.db.prepare('SELECT id FROM songs WHERE favorite = 1').all() as unknown as Array<{ id: number }>).map((row) => row.id))
+    const kept = [...new Set(songIds)].filter((songId) => favorites.has(songId))
+    this.db.exec('BEGIN')
+    try {
+      this.db.prepare('DELETE FROM playlist_songs WHERE playlist_id = ?').run(id)
+      const insert = this.db.prepare('INSERT INTO playlist_songs (playlist_id, song_id, position) VALUES (?, ?, ?)')
+      kept.forEach((songId, position) => insert.run(id, songId, position))
+      this.db.exec('COMMIT')
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+    return this.get(id)
+  }
+
+  remove(id: number): boolean {
+    const found = this.get(id) !== null
+    this.db.prepare('DELETE FROM playlist_songs WHERE playlist_id = ?').run(id)
+    this.db.prepare('DELETE FROM playlists WHERE id = ?').run(id)
+    return found
+  }
+
+  /** Takes a song out of every playlist (no longer a favourite, or deleted). */
+  removeSong(songId: number) {
+    this.db.prepare('DELETE FROM playlist_songs WHERE song_id = ?').run(songId)
+  }
+}
+
+function cleanName(name: string): string {
+  return name.trim().slice(0, MAX_PLAYLIST_NAME)
+}

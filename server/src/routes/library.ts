@@ -1,5 +1,6 @@
 import type { Context, Hono } from 'hono'
 import type { Library, Song } from '../db/library.ts'
+import type { Playlists } from '../db/playlists.ts'
 
 export const MAX_UPLOAD_BYTES = 30 * 1024 * 1024
 
@@ -12,7 +13,7 @@ export function songFrom(library: Library, c: Context): Song | null {
 export const songNotFound = (c: Context) => c.json({ error: 'Song not found.' }, 404)
 
 /** The library of tabs: listing, practice settings, local files and their edited copies. */
-export function libraryRoutes(app: Hono, library: Library) {
+export function libraryRoutes(app: Hono, library: Library, playlists: Playlists) {
   const songOf = (c: Context) => songFrom(library, c)
 
   app.get('/api/songs', (c) => {
@@ -36,6 +37,8 @@ export function libraryRoutes(app: Hono, library: Library) {
     if (typeof body.title === 'string' && body.title.trim()) changes.title = body.title.trim()
     if (typeof body.artist === 'string') changes.artist = body.artist.trim()
     if (typeof body.trackCount === 'number' && Number.isInteger(body.trackCount)) changes.trackCount = body.trackCount
+    // No longer a favourite: out of the playlists too (it would be gone at the next start anyway).
+    if (changes.favorite === false) playlists.removeSong(song.id)
     return c.json(library.update(song.id, changes))
   })
 
@@ -48,6 +51,7 @@ export function libraryRoutes(app: Hono, library: Library) {
     const song = songOf(c)
     if (!song) return songNotFound(c)
     await library.remove(song.id)
+    playlists.removeSong(song.id)
     return c.json({ ok: true })
   })
 

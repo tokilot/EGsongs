@@ -525,9 +525,6 @@ function TextTab({ run, t }: TabProps) {
   const beat = usePlayer().state.editing!.beat
   return (
     <>
-      <Row label={t('文字')}>
-        <TextField label={t('拍上的文字标注')} value={beat.text} placeholder={t('拍上的文字标注')} onCommit={(value) => run((editor) => editor.setText(value))} />
-      </Row>
       <Row label={t('歌词')}>
         <TextField label={t('拍下的歌词')} value={beat.lyrics} placeholder={t('拍下的歌词')} onCommit={(value) => run((editor) => editor.setLyrics(value))} />
       </Row>

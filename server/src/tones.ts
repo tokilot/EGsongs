@@ -1,39 +1,41 @@
-import { existsSync, readFileSync } from 'node:fs'
-import { mkdir, rename, writeFile } from 'node:fs/promises'
+import { existsSync, readFileSync, rmSync } from 'node:fs'
 import path from 'node:path'
+import type { DatabaseSync } from 'node:sqlite'
 
 /**
- * The guitar tone library, kept in data/tones.json for every song (it used to live in the browser's storage).
+ * The guitar tone library, one for every song, kept as one JSON document in data/user.db (table `tone_library`).
  * The server only keeps it; its format (templates, chains, older versions) is the page's (web/src/tones/library.ts).
  */
-export class ToneFile {
-  private readonly file: string
-  // One write at a time, in the order they came, so a slow one cannot land after a newer one.
-  private writing: Promise<void> = Promise.resolve()
+export class ToneStore {
+  private readonly db: DatabaseSync
 
-  constructor(dataDir: string) {
-    this.file = path.join(dataDir, 'tones.json')
+  constructor(db: DatabaseSync, dataDir: string) {
+    this.db = db
+    this.db.exec('CREATE TABLE IF NOT EXISTS tone_library (id INTEGER PRIMARY KEY CHECK (id = 1), json TEXT NOT NULL)')
+    // Until 2026-10-31 it was data/tones.json: taken in once, then gone.
+    const old = path.join(dataDir, 'tones.json')
+    if (existsSync(old)) {
+      try {
+        if (this.read() === null) this.write(JSON.parse(readFileSync(old, 'utf8')))
+        rmSync(old, { force: true })
+      } catch {
+        // Not readable JSON: left where it is.
+      }
+    }
   }
 
   /** The library as last saved, or null before the first save. */
   read(): unknown {
-    if (!existsSync(this.file)) return null
-    try {
-      return JSON.parse(readFileSync(this.file, 'utf8'))
-    } catch {
-      return null
-    }
+    const row = this.db.prepare('SELECT json FROM tone_library WHERE id = 1').get() as { json: string } | undefined
+    return row ? JSON.parse(row.json) : null
   }
 
-  save(library: unknown): Promise<void> {
-    const write = async () => {
-      await mkdir(path.dirname(this.file), { recursive: true })
-      // Written aside and moved over, so a crash half way leaves the last library whole.
-      const temporary = `${this.file}.tmp`
-      await writeFile(temporary, JSON.stringify(library, null, 2))
-      await rename(temporary, this.file)
-    }
-    this.writing = this.writing.then(write, write)
-    return this.writing
+  // A single statement: SQLite writes it whole or not at all.
+  private write(library: unknown) {
+    this.db.prepare('INSERT OR REPLACE INTO tone_library (id, json) VALUES (1, ?)').run(JSON.stringify(library))
+  }
+
+  async save(library: unknown): Promise<void> {
+    this.write(library)
   }
 }

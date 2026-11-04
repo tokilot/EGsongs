@@ -17,8 +17,14 @@ export interface PracticeSettings {
   /** Tones from the library given to tracks, per kind of section: track index -> { clean, overdrive, distortion, bass } -> tone id. */
   /** Track index -> the id of its tone in the library. Older settings had one per kind of section. */
   trackTones?: Record<string, string | Record<string, string>>
+  /** Track index -> a preset of an extra sound font: its file and program. */
+  trackSounds?: Record<string, { font: string; program: number }>
   /** The key the note names are read in, picked by hand (a key signature); null or missing follows the tab. */
   key?: number | null
+  /** Master bar index -> the track shown from it on, while playing. */
+  trackSwitchesFrom?: Record<string, number>
+  /** Before 2026-11-05: master bar index -> the track shown after it (read once, then saved as trackSwitchesFrom). */
+  trackSwitches?: Record<string, number>
 }
 
 export interface Song {
@@ -81,6 +87,30 @@ export function updateSong(
 
 export function deleteSong(id: number): Promise<{ ok: boolean }> {
   return request(`/api/songs/${id}`, { method: 'DELETE' })
+}
+
+/** A playlist of favourite songs, in playing order (server/src/db/playlists.ts). */
+export interface Playlist {
+  id: number
+  name: string
+  songIds: number[]
+}
+
+export function listPlaylists(): Promise<Playlist[]> {
+  return request('/api/playlists')
+}
+
+export function createPlaylist(name: string): Promise<Playlist> {
+  return request('/api/playlists', json('POST', { name }))
+}
+
+/** A new name and/or the songs in their new order (favourites only; the server leaves out the rest). */
+export function updatePlaylist(id: number, changes: { name?: string; songIds?: number[] }): Promise<Playlist> {
+  return request(`/api/playlists/${id}`, json('PATCH', changes))
+}
+
+export function deletePlaylist(id: number): Promise<{ ok: boolean }> {
+  return request(`/api/playlists/${id}`, { method: 'DELETE' })
 }
 
 export async function getSongFile(id: number): Promise<Uint8Array> {

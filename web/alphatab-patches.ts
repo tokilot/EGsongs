@@ -14,6 +14,14 @@ interface Patch {
 
 const PATCHES: Patch[] = [
   {
+    // The synthesizer's solo mutes every channel not soloed, the previews' too: with a track soloed, the tone sample
+    // and the instrument preview were silent. They play on channels 60–63 (PREVIEW_CHANNELS in audio/ampRouting.ts,
+    // INSTRUMENT_PREVIEW_CHANNELS in the controller), above any a song uses; the solo leaves those alone.
+    why: 'previews sound while a track is soloed',
+    find: `anySolo && channel !== this._metronomeChannel && !this._soloChannels.has(channel);`,
+    replace: `anySolo && channel !== this._metronomeChannel && channel < 60 && !this._soloChannels.has(channel);`,
+  },
+  {
     // To save memory the synthesizer only prepares the instruments the loaded song uses, and only when the
     // song's MIDI is loaded. A one-time file (the instrument preview in "edit track") with another
     // instrument then plays silently; after applying it the song uses it, so it sounds. Load what the
@@ -35,6 +43,89 @@ const PATCHES: Patch[] = [
 				append = true;
 			}
 		}`,
+  },
+  {
+    // A section marker ("Guitar Solo") may share its row with the effects of the same beat (P.M., let ring...):
+    // alphaTab sizes it as one beat wide, but the text runs on over the next beats and covers them. Give
+    // markers a row of their own (the user asked for the text above the effects, as on Songsterr).
+    why: 'section markers on a row of their own',
+    find: `		return NotationElement.EffectMarker;
+	}
+	get hideOnMultiTrack() {
+		return true;
+	}
+	get canShareBand() {
+		return true;
+	}`,
+    replace: `		return NotationElement.EffectMarker;
+	}
+	get hideOnMultiTrack() {
+		return true;
+	}
+	get canShareBand() {
+		return false;
+	}`,
+  },
+  {
+    // And a little room under the marker's text, so it does not sit right on the effects below it (the user
+    // asked for it a few pixels higher). In score units: about 5 px at the usual zoom.
+    why: 'room under a section marker',
+    find: `		return new TextGlyph(0, 0, !beat.voice.bar.masterBar.section.marker ? beat.voice.bar.masterBar.section.text : \`[\${beat.voice.bar.masterBar.section.marker}] \${beat.voice.bar.masterBar.section.text}\`, renderer.resources.elementFonts.get(NotationElement.EffectMarker), TextAlign.Left);`,
+    replace: `		const markerGlyph = new TextGlyph(0, 0, !beat.voice.bar.masterBar.section.marker ? beat.voice.bar.masterBar.section.text : \`[\${beat.voice.bar.masterBar.section.marker}] \${beat.voice.bar.masterBar.section.text}\`, renderer.resources.elementFonts.get(NotationElement.EffectMarker), TextAlign.Left);
+		const layoutMarker = markerGlyph.doLayout.bind(markerGlyph);
+		markerGlyph.doLayout = () => {
+			layoutMarker();
+			markerGlyph.height += 4;
+		};
+		return markerGlyph;`,
+  },
+  {
+    // Effects (P.M., let ring, vibrato, tapping, dynamics...) in grey; text written on the score (section markers,
+    // text, tempo, lyrics, chord names, endings, directions, capo, swing, free time) keeps the main colour. The user
+    // asked for this. Grey is the secondary colour the page sets for each theme.
+    why: 'effects in grey, written text not',
+    find: `			const v = this._uniqueEffectGlyphs[i];
+			for (let k = 0, l = v.length; k < l; k++) {
+				const g = v[k];
+				const _ = ElementStyleHelper.beat(canvas, BeatSubElement.Effects, g.beat, false);
+				try {
+					g.paint(cx + this.x, cy + this.y, canvas);
+				} finally {
+					_?.[Symbol.dispose]?.();
+				}`,
+    replace: `			const v = this._uniqueEffectGlyphs[i];
+			const written = [NotationElement.EffectMarker, NotationElement.EffectText, NotationElement.EffectTempo, NotationElement.EffectLyrics, NotationElement.EffectChordNames, NotationElement.EffectAlternateEndings, NotationElement.EffectDirections, NotationElement.EffectCapo, NotationElement.EffectTripletFeel, NotationElement.EffectFreeTime, NotationElement.EffectBeatTimer].includes(this.info.notationElement);
+			for (let k = 0, l = v.length; k < l; k++) {
+				const g = v[k];
+				const _ = ElementStyleHelper.beat(canvas, BeatSubElement.Effects, g.beat, false);
+				const color = canvas.color;
+				if (!written) canvas.color = this.renderer.resources.secondaryGlyphColor;
+				try {
+					g.paint(cx + this.x, cy + this.y, canvas);
+				} finally {
+					canvas.color = color;
+					_?.[Symbol.dispose]?.();
+				}`,
+  },
+  {
+    // The effects drawn inside the tablature, with the notes, in grey too: hammer-ons and pull-offs (arc and
+    // "H"/"P"), slides, bends and the whammy bar (the user asked). Ties stay as they are. Their paint is wrapped
+    // here, once the classes exist, so the class bodies need no patching.
+    why: 'effects inside the tablature in grey',
+    find: `class TabBeatContainerGlyph extends BeatContainerGlyph {`,
+    replace: `for (const greyGlyph of [TabSlurGlyph, TabSlideLineGlyph, TabBendGlyph, TabWhammyBarGlyph]) {
+	const paintInColor = greyGlyph.prototype.paint;
+	greyGlyph.prototype.paint = function(cx, cy, canvas) {
+		const color = canvas.color;
+		canvas.color = this.renderer.resources.secondaryGlyphColor;
+		try {
+			paintInColor.call(this, cx, cy, canvas);
+		} finally {
+			canvas.color = color;
+		}
+	};
+}
+class TabBeatContainerGlyph extends BeatContainerGlyph {`,
   },
   {
     // No "rendered by alphaTab" line under the score (the user asked; alphaTab has no setting for it).
@@ -157,9 +248,10 @@ class TabClefGlyph extends MusicFontGlyph {`,
   // ---- Amp buses: tone chains per track ----
   // The synthesizer mixes every track into one stereo stream, so nothing can be done to one track alone. These
   // patches give it up to eight more stereo streams ("amp buses"). The page sends a routing table, MIDI channel ->
-  // GM program -> [bus, program to play], from the tones the user gave the tracks (web/src/audio/ampRouting.ts): a channel
-  // playing a routed program renders into that bus, overdriven and distortion guitar with the clean electric
-  // guitar samples, and the page runs each bus through its tone's chain (web/src/audio/ampSim.ts).
+  // GM program -> [bus, program to play, bank?], from the tones and extra sound fonts the user gave the tracks
+  // (web/src/audio/ampRouting.ts): a channel playing a routed program renders into that bus, overdriven and
+  // distortion guitar with the clean electric guitar samples, and the page runs each bus through its tone's chain
+  // (web/src/audio/ampSim.ts). A route with a bank plays that bank's preset on the main output.
   // A block of samples is [bus count, main stream, bus 1, …, bus N], all streams the same length; it travels
   // worker -> main thread -> worklet unchanged, and only the synthesizer that fills it and the worklet that plays
   // it know the format.
@@ -189,8 +281,9 @@ class TabClefGlyph extends MusicFontGlyph {`,
 			const routes = this.ampRouting ? this.ampRouting[channel] : void 0;
 			const route = routes ? routes[presetNumber] : void 0;
 			c.ampBus = route ? route[0] : 0;
-			if (route) presetNumber = route[1];
-			presetIndex = this._getPresetIndex(c.bank & 2047, presetNumber);
+			// A route with a bank plays a preset of an extra sound font (bus 0: no amp), whatever the program asked.
+			if (route && route.length > 2) presetIndex = this._getPresetIndex(route[2], route[1]);
+			if (!route || route.length <= 2 || presetIndex === -1) presetIndex = this._getPresetIndex(c.bank & 2047, route && route.length <= 2 ? route[1] : presetNumber);
 		}
 		if (midiDrums) c.ampBus = 0;
 		c.presetIndex = presetIndex;`,

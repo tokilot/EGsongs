@@ -4,7 +4,7 @@ import { chainWith } from '../audio/toneChain.ts'
 import { DEFAULT_TONE_LIBRARY, findTone } from './library.ts'
 import { ToneStore, type ToneServer } from './toneStore.ts'
 
-const mine: Tone = { id: 'custom-1', name: 'My lead', family: 'guitar', builtIn: false, chain: chainWith({ amp: { type: 'metal', params: { gain: 80 } } }) }
+const mine: Tone = { id: 'custom-1', name: 'My lead', family: 'guitar', chain: chainWith({ amp: { type: 'metal', params: { gain: 80 } } }) }
 
 /** Stands in for the server: what it holds, and every library saved to it. */
 function fakeServer(stored: unknown, options: { down?: boolean; saveFails?: boolean } = {}) {

@@ -256,3 +256,65 @@
   margin: 0;
   font-size: 17px;
 }
+
+/* The two libraries on the left: the sample sets above the effect tones. */
+.lists {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.listTitle {
+  margin: 0;
+  font-size: 14px;
+}
+
+.fontMeta {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* A sample set's presets, by kind of instrument. */
+.presetGroup h3 {
+  margin: 0 0 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.presets {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 2px 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.presets button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 8px;
+  background: none;
+  border: none;
+  border-radius: 7px;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+}
+
+.presets button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.presets button:hover:not(:disabled) {
+  background: var(--surface-raised);
+}
+
+.presets button:disabled {
+  color: var(--text-muted);
+}
