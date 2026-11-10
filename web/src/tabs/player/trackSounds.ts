@@ -24,14 +24,18 @@ export interface SoundFontEntry {
   /** Every other set: the bank it is loaded in. */
   bank?: number
   presets: Array<{ program: number; name: string }>
+  /** The main set: presets added to it from other files, in a bank of their own (Bread's guitars in Default.sf2, see server/src/soundFonts.ts ADDED_BANK). */
+  added?: { bank: number; presets: Array<{ program: number; name: string }> }
 }
 
-/** A sample set loaded after the main one. */
+/** A sample set loaded after the main one, or (`main`) the presets added to the main set. */
 export interface ExtraSoundFont {
   name: string
   bank: number
   kind: 'gm' | 'extra'
   presets: Array<{ program: number; name: string }>
+  /** The main set's added presets: loaded with it, nothing more to fetch. */
+  main?: boolean
 }
 
 /** Stored presets made safe: track indexes to a font name and a program 0–127. */

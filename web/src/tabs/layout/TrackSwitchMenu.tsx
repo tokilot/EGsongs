@@ -1,6 +1,7 @@
 import { Check } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { usePlayer } from '../player/usePlayer.ts'
+import { sortByName } from '../../shared/alphabetical.ts'
 import { useLanguage } from '../../shared/ui/i18n.ts'
 import styles from './TrackSwitchMenu.module.css'
 
@@ -57,7 +58,7 @@ export function TrackSwitchMenu({ place, onClose }: { place: TrackSwitchMenuPlac
   return (
     <div ref={menu} className={styles.menu} role="menu" aria-label={t('音轨切换')} style={{ left, top: place.y }} onContextMenu={(event) => event.preventDefault()}>
       <h3>{t('从第 {n} 小节开始切换到：', { n: place.bar + 1 })}</h3>
-      {state.tracks.map((track) => (
+      {sortByName(state.tracks, (track) => track.name).map((track) => (
         <button key={track.index} type="button" role="menuitemradio" aria-checked={current === track.index} onClick={() => pick(track.index)}>
           <span className={styles.tick}>{current === track.index && <Check size={14} aria-hidden />}</span>
           {track.name}

@@ -1,4 +1,7 @@
-/** The test songs listed in CLAUDE.md ("测试案例"). Numbers are what the pinned revision contains. */
+/**
+ * The test songs, pinned to a revision (`npm run fixtures` downloads them into test/songs/, which is not in the repo:
+ * they are the online tabs' own content). Numbers are what the pinned revision contains.
+ */
 export interface Fixture {
   no: number
   songId: number

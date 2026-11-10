@@ -2,6 +2,7 @@ import { Star, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import * as api from '../api.ts'
 import type { Song } from '../api.ts'
+import { sortByName } from '../../shared/alphabetical.ts'
 import { translate, useLanguage } from '../../shared/ui/i18n.ts'
 import { useSong } from './useSong.ts'
 import { PlaylistPanel } from './PlaylistPanel.tsx'
@@ -13,7 +14,10 @@ interface SongListProps {
   onPick?: () => void
 }
 
-/** "My tabs": everything in the library, most recently practised first, with a favourites filter; and the playlists. */
+/**
+ * "My tabs": everything in the library by the first letter of the title (2026-11-10; then the artist), with a
+ * favourites filter; and the playlists, which keep their own order.
+ */
 export function SongList({ onPick }: SongListProps) {
   const { t } = useLanguage()
   const { song: current, open, close, replace, libraryVersion, libraryChanged } = useSong()
@@ -29,7 +33,7 @@ export function SongList({ onPick }: SongListProps) {
       .listSongs({ favorite: favoritesOnly })
       .then((list) => {
         if (cancelled) return
-        setSongs(list)
+        setSongs(sortByName(list, (song) => `${song.title} ${song.artist}`))
         setError(null)
       })
       .catch((cause) => {

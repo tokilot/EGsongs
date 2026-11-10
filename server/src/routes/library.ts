@@ -37,9 +37,9 @@ export function libraryRoutes(app: Hono, library: Library, playlists: Playlists)
     if (typeof body.title === 'string' && body.title.trim()) changes.title = body.title.trim()
     if (typeof body.artist === 'string') changes.artist = body.artist.trim()
     if (typeof body.trackCount === 'number' && Number.isInteger(body.trackCount)) changes.trackCount = body.trackCount
-    // No longer a favourite: out of the playlists too (it would be gone at the next start anyway).
+    // No longer a favourite: out of the playlists too (only favourites go in them).
     if (changes.favorite === false) playlists.removeSong(song.id)
-    return c.json(library.update(song.id, changes))
+    return c.json(await library.update(song.id, changes))
   })
 
   app.post('/api/songs/:id/open', (c) => {

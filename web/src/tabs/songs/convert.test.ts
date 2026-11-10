@@ -1,5 +1,5 @@
 // Converter tests against the 10 songs from CLAUDE.md ("测试案例").
-// Fixtures live in data/songs/ (not in the repo); run `npm run fixtures` first.
+// Fixtures live in test/songs/ (not in the repo); run `npm run fixtures` first.
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { midi, model, Settings } from '@coderline/alphatab'
@@ -9,7 +9,7 @@ import { convertToScore } from './convert.ts'
 
 type Json = Record<string, unknown>
 
-const cacheDir = path.resolve(import.meta.dirname, '../../../../data/songs')
+const cacheDir = path.resolve(import.meta.dirname, '../../../../test/songs')
 const fixtureDir = (fixture: Fixture) => path.join(cacheDir, String(fixture.songId), String(fixture.revisionId))
 const available = FIXTURES.every((fixture) => existsSync(path.join(fixtureDir(fixture), 'meta.json')))
 if (!available) console.warn('Songsterr fixtures are missing; run `npm run fixtures` to enable the converter tests.')

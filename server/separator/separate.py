@@ -1,10 +1,11 @@
 """Splits a recording into stems with a RoFormer model (python-audio-separator); run by server/src/stems.ts.
 
-Usage: python -I separate.py <input.wav> <output dir> <model dir> [cuda|cpu] [checkpoint] [config]
+Usage: python -I separate.py <input.wav> <output dir> <model dir> [cuda|cpu] [checkpoint] [config] [stems]
        python -I separate.py --devices
 
 The checkpoint and config are file names in the model directory (BS-RoFormer SW by default; the server's
-MODELS list says which). Prints one JSON object per line on stdout: {"device": "cuda"} first, {"progress": 0.42}
+MODELS list says which). Stems is a comma-separated list of the stems wanted, in order, each one of the config's
+training.instruments (all of them, in the config's order, when left out). Prints one JSON object per line on stdout: {"device": "cuda"} first, {"progress": 0.42}
 while it works, then {"stems": [{"name": "guitar", "file": "guitar.flac", "rmsDb": -18.2}, ...]}. Logs and errors
 go to stderr; a failure exits with code 1. With --devices it prints the graphics cards PyTorch can use instead.
 """
@@ -13,12 +14,11 @@ import json
 import logging
 import math
 import os
+import re
 import sys
 
 MODEL = "BS-Roformer-SW.ckpt"
 CONFIG = "BS-Roformer-SW.yaml"
-# The stem names the models use (training.instruments in their YAML), in the order the page lists them.
-STEMS = ["vocals", "drums", "bass", "guitar", "piano", "other"]
 
 
 def emit(message):
@@ -60,6 +60,31 @@ def rms_db(path):
     return round(20 * math.log10(rms), 1) if rms > 0 else -120.0
 
 
+def model_stems(config_path, wanted):
+    """The stems to write: those asked for, checked against the model's own list (training.instruments)."""
+    import yaml
+
+    class Loader(yaml.SafeLoader):
+        pass
+
+    # The configs write some values as !!python/tuple, which the safe loader refuses; a list does here.
+    Loader.add_constructor("tag:yaml.org,2002:python/tuple", lambda loader, node: loader.construct_sequence(node))
+    with open(config_path, encoding="utf-8") as file:
+        instruments = [str(name) for name in (yaml.load(file, Loader=Loader).get("training") or {}).get("instruments") or []]
+    if not wanted:
+        return instruments
+    known = {name.lower() for name in instruments}
+    unknown = [name for name in wanted if name.lower() not in known]
+    if unknown:
+        raise ValueError(f"The model has no stem {', '.join(unknown)} (it has {', '.join(instruments)}).")
+    return wanted
+
+
+def file_name(stem):
+    """A file name for a stem name, which may hold characters a file name cannot."""
+    return re.sub(r"[^A-Za-z0-9_-]+", "_", stem) + ".flac"
+
+
 def devices():
     import torch
 
@@ -76,6 +101,8 @@ def main():
     device = sys.argv[4] if len(sys.argv) > 4 else "cuda"
     model = sys.argv[5] if len(sys.argv) > 5 else MODEL
     config = sys.argv[6] if len(sys.argv) > 6 else CONFIG
+    wanted = [name for name in (sys.argv[7] if len(sys.argv) > 7 else "").split(",") if name]
+    stem_names = model_stems(os.path.join(model_dir, config), wanted)
     if device == "cpu":
         # Hidden before PyTorch loads, so that it (and the separator) cannot see the graphics card. An empty value
         # does not hide it (PyTorch 2.15); -1 does.
@@ -110,11 +137,12 @@ def main():
         os.path.join(model_dir, config),
     )
     separator.load_model(model)
-    separator.separate(input_path, {name: name for name in STEMS})
+    # The separator adds the extension to these names itself.
+    separator.separate(input_path, {name: file_name(name)[: -len(".flac")] for name in stem_names})
 
     stems = []
-    for name in STEMS:
-        file = f"{name}.flac"
+    for name in stem_names:
+        file = file_name(name)
         path = os.path.join(output_dir, file)
         if os.path.exists(path):
             stems.append({"name": name, "file": file, "rmsDb": rms_db(path)})

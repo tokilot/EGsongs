@@ -206,3 +206,15 @@
   width: 64px;
 }
 
+
+/* "Delete track", at the start of the footer: an action that cannot be undone here, in the danger colour. */
+.deleteTrack {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--danger);
+}
+
+.deleteTrack:disabled {
+  opacity: 0.45;
+}

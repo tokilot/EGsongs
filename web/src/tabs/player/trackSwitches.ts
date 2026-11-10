@@ -48,3 +48,12 @@ export function withTrackSwitch(switches: TrackSwitches, bar: number, track: num
   else next[bar] = track
   return next
 }
+
+/** The switches after track `removed` is deleted: those to it gone, those to later tracks moved down. */
+export function switchesAfterRemoval(switches: TrackSwitches, removed: number): TrackSwitches {
+  const result: TrackSwitches = {}
+  for (const [bar, track] of Object.entries(switches)) {
+    if (track !== removed) result[bar] = track > removed ? track - 1 : track
+  }
+  return result
+}

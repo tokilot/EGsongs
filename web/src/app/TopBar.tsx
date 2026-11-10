@@ -102,9 +102,9 @@ export function TopBar() {
           <SlidersHorizontal size={20} aria-hidden />
           <span>{t('音色')}</span>
         </a>
-        <a className={styles.navButton} href={STEMS_HASH} title={t('分轨')} aria-current={view === 'stems' ? 'page' : undefined}>
+        <a className={styles.navButton} href={STEMS_HASH} title={t('转谱')} aria-current={view === 'stems' ? 'page' : undefined}>
           <AudioLines size={20} aria-hidden />
-          <span>{t('分轨')}</span>
+          <span>{t('转谱')}</span>
         </a>
       </div>
 

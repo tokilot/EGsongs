@@ -5,7 +5,7 @@ import type { StemStore } from '../stems.ts'
 // A recording, decoded to 16-bit WAV by the page: about 10 MB a minute.
 const MAX_RECORDING_BYTES = 400 * 1024 * 1024
 
-/** Stems: recordings split into vocals, drums, bass, guitar, piano and other (see stems.ts), not tied to a song. */
+/** Stems: recordings split into the stems of the model picked (see stems.ts MODELS), not tied to a song. */
 export function stemRoutes(app: Hono, stems: StemStore) {
   app.get('/api/stems', async (c) => c.json(await stems.list()))
 

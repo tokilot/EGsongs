@@ -111,6 +111,26 @@ describe('SongsterrClient', () => {
     expect(peak).toBe(1)
   })
 
+  it('sends browser headers for search, metadata, tracks and revisions', async () => {
+    const { fetchImpl } = fakeUpstream()
+    const requests: Array<{ url: string; headers: Headers }> = []
+    const recording = ((input: string | URL | Request, init?: RequestInit) => {
+      requests.push({ url: String(input), headers: new Headers(init?.headers) })
+      return fetchImpl(input, init)
+    }) as typeof fetch
+    const client = new SongsterrClient({ cacheDir: dataDir, fetch: recording, minIntervalMs: 0 })
+    await client.search('promise')
+    await client.getAllTracks(await client.getMeta(34008))
+    await client.getMeta(34008, 6383873)
+    await client.getRevisions(34008)
+    expect(requests).toHaveLength(6)
+    for (const { url, headers } of requests) {
+      expect(headers.get('Accept-Language'), url).toMatch(/^[a-z]{2}-[A-Z]{2}/)
+      expect(headers.get('User-Agent'), url).toContain('Edg/156.0.0.0')
+      expect(headers.get('Accept'), url).toBe('application/json')
+    }
+  })
+
   it('refuses restricted tabs', async () => {
     for (const overrides of [{ restriction: 'license' }, { isRestricted: true }]) {
       const { fetchImpl } = fakeUpstream(overrides)
@@ -148,6 +168,38 @@ describe('API', () => {
   }
 
   const LINK = 'https://www.songsterr.com/a/wsa/akira-yamaoka-promise-tab-s34008'
+
+  it.each(['link', 'search result'])('imports a %s when the metadata endpoint rejects the old browser identity', async (source) => {
+    const upstream = fakeUpstream()
+    const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+      const headers = new Headers(init?.headers)
+      if (String(input).includes('/api/meta/') && !headers.get('User-Agent')?.includes('Edg/156.0.0.0')) {
+        return new Response('Forbidden', { status: 403 })
+      }
+      return upstream.fetchImpl(input, init)
+    }) as typeof fetch
+    const { app, library } = createApp({ dataDir, fetch: fetchImpl, songsterrIntervalMs: 0 })
+    try {
+      let url = LINK
+      if (source === 'search result') {
+        const search = await app.request('/api/songsterr/search?q=promise')
+        expect(search.status).toBe(200)
+        const hits = await search.json() as Array<{ songId: number }>
+        url = String(hits[0].songId)
+      }
+      const imported = await app.request('/api/songsterr/import', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }),
+      })
+      expect(imported.status).toBe(201)
+      const song = await imported.json() as { id: number }
+      const tracks = await app.request(`/api/songs/${song.id}/tracks`)
+      expect(tracks.status).toBe(200)
+      expect((await tracks.json() as { tracks: unknown[] }).tracks).toHaveLength(2)
+      expect(upstream.requests.filter((request) => request.endsWith('.json'))).toHaveLength(2)
+    } finally {
+      library.close()
+    }
+  })
 
   it('imports a Songsterr song and serves it without further network requests', async () => {
     const api = setup()

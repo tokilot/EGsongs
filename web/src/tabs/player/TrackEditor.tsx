@@ -1,6 +1,8 @@
-import { AudioWaveform, Play, SlidersHorizontal, X } from 'lucide-react'
+import { AudioWaveform, Play, SlidersHorizontal, Trash2, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useLanguage } from '../../shared/ui/i18n.ts'
+import * as api from '../api.ts'
+import { useSong } from '../library/useSong.ts'
 import { GM_PROGRAMS_EN, GM_PROGRAMS_ZH, programName } from './gmPrograms.ts'
 import { toneFamilyOf, toneProgram, type Tone } from '../../audio/tone.ts'
 import { allTones, findTone } from '../../tones/library.ts'
@@ -72,6 +74,30 @@ function EditorDialog({ index, current }: { index: number; current: TrackSetup }
   const [sound, setSound] = useState<TrackSound | null>(savedSound)
 
   const close = () => openTrackEditor(null)
+
+  // Deleting the track: saved straight away as the song's edited tab (the track edits baked in); only the tab as
+  // imported brings it back. Not while the tab is being edited (its undo history goes by track), nor the last track.
+  const { song, replace, libraryChanged } = useSong()
+  const [deleting, setDeleting] = useState(false)
+  const lastTrack = state.tracks.length <= 1
+  const removeTrack = async () => {
+    const trackName = state.tracks.find((track) => track.index === index)?.name ?? current.name
+    if (!song || !window.confirm(t('删除音轨「{name}」？删除后会保存为曲谱的编辑版，要找回只能恢复导入时的曲谱。', { name: trackName }))) return
+    const bytes = player.trackRemovalFile(index)
+    if (!bytes) return
+    setDeleting(true)
+    try {
+      replace(await api.saveEditedSong(song.id, bytes))
+      player.removeTrack(index)
+      libraryChanged()
+      close()
+    } catch (cause) {
+      window.alert(t('保存失败：{message}', { message: (cause as Error).message }))
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') openTrackEditor(null)
@@ -358,6 +384,16 @@ function EditorDialog({ index, current }: { index: number; current: TrackSetup }
         {message && <p className={panel.message}>{message}</p>}
 
         <footer className={panel.footer}>
+          <button
+            type="button"
+            className={`${panel.secondary} ${styles.deleteTrack}`}
+            disabled={editingTab || lastTrack || deleting}
+            title={editingTab ? t('编辑曲谱时不能删除音轨') : lastTrack ? t('只剩这一条音轨，不能删除') : undefined}
+            onClick={() => void removeTrack()}
+          >
+            <Trash2 size={16} aria-hidden />
+            {t('删除音轨')}
+          </button>
           <button
             type="button"
             className={panel.secondary}

@@ -19,6 +19,9 @@ export function songRoutes(app: Hono, library: Library, songsterr: SongsterrClie
     if (song.source !== 'songsterr' || song.songsterrId === null || song.revisionId === null) {
       return c.json({ error: 'This song was not imported from a link.' }, 400)
     }
+    // A favourite's tab is kept with it in user.db; any other song's is in the online cache (fetched again if gone).
+    const kept = library.readOnline(song)
+    if (kept) return c.json({ tracks: kept.tracks })
     const meta = await songsterr.getMeta(song.songsterrId, song.revisionId)
     return c.json({ tracks: await songsterr.getAllTracks(meta) })
   })
@@ -69,6 +72,6 @@ export function songRoutes(app: Hono, library: Library, songsterr: SongsterrClie
     const meta = await songsterr.getMeta(song.songsterrId, revisionId)
     await songsterr.getAllTracks(meta)
     await library.discardEdited(song.id)
-    return c.json(library.setRevision(song.id, metaInput(meta)))
+    return c.json(await library.setRevision(song.id, metaInput(meta)))
   })
 }

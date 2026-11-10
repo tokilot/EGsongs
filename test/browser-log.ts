@@ -1,8 +1,8 @@
 // Loads a page in headless Edge and prints what the browser console and network report. Diagnostic helper.
-//   node test/browser-log.ts http://localhost:5173/ [waitMs]
+//   node test/browser-log.ts http://localhost:7273/ [waitMs]
 import { chromium } from 'playwright-core'
 
-const url = process.argv[2] ?? 'http://localhost:5173/'
+const url = process.argv[2] ?? 'http://localhost:7273/'
 const waitMs = Number(process.argv[3] ?? 6000)
 
 const browser = await chromium.launch({ channel: 'msedge', args: ['--autoplay-policy=no-user-gesture-required'] })

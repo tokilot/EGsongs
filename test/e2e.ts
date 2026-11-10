@@ -9,6 +9,8 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } fro
 import { cpus, tmpdir } from 'node:os'
 import path from 'node:path'
 import { chromium, type Page } from 'playwright-core'
+import { sortByName } from '../web/src/shared/alphabetical.ts'
+import { writeMidi } from '../web/src/tabs/library/midiTestFile.ts'
 
 const root = path.resolve(import.meta.dirname, '..')
 const API_PORT = 5184
@@ -19,8 +21,8 @@ const shots = process.argv.includes('--shots')
 const shotDir = path.join(root, 'test', 'shots')
 
 const dataDir = mkdtempSync(path.join(tmpdir(), 'tabs-e2e-'))
-if (existsSync(path.join(root, 'data/songs'))) {
-  cpSync(path.join(root, 'data/songs'), path.join(dataDir, 'songs'), { recursive: true })
+if (existsSync(path.join(root, 'test/songs'))) {
+  cpSync(path.join(root, 'test/songs'), path.join(dataDir, 'songs'), { recursive: true })
 }
 
 const children: ChildProcess[] = []
@@ -121,7 +123,7 @@ async function cursorPosition(page: Page): Promise<string> {
 }
 
 async function main() {
-  start('node', ['src/index.ts'], path.join(root, 'server'), { TABS_PORT: String(API_PORT), TABS_DATA_DIR: dataDir, TABS_SOUNDFONTS: path.join(root, 'data/soundfonts') })
+  start('node', ['src/index.ts'], path.join(root, 'server'), { TABS_PORT: String(API_PORT), TABS_DATA_DIR: dataDir, TABS_SOUNDFONTS: path.join(root, 'data/soundfonts'), TABS_DEMO_SONGS: path.join(dataDir, 'no-demo') })
   start('npx', ['vite', '--port', String(WEB_PORT), '--strictPort'], path.join(root, 'web'), { TABS_PORT: String(API_PORT) })
   await waitFor(`http://127.0.0.1:${API_PORT}/api/songs`)
   await waitFor(BASE)
@@ -222,7 +224,7 @@ async function main() {
         starText: (document.querySelector('header button[aria-pressed]')!.textContent ?? '').trim(),
       }
     })
-    assert(layout.order.join(' | ') === '曲谱 | 音色 | 分轨 | 我的曲谱 | 新建曲谱 | 搜索曲谱 | 帮助', `order is ${layout.order.join(' | ')}`)
+    assert(layout.order.join(' | ') === '曲谱 | 音色 | 转谱 | 我的曲谱 | 新建曲谱 | 搜索曲谱 | 帮助', `order is ${layout.order.join(' | ')}`)
     assert(layout.stacked, 'a top bar button does not have its icon above its label')
     assert(layout.titleOffCentre < 12, `the song title is not centred (${layout.titleOffCentre}px off)`)
     assert(layout.actionsUnder, 'the star and edit buttons are not under the song title')
@@ -400,8 +402,9 @@ async function main() {
     await more.click()
     const menu = page.getByRole('menu', { name: '音轨切换' })
     await menu.getByText('从第 2 小节开始切换到：').waitFor()
-    // By position: several tracks can have the same name.
-    await menu.getByRole('menuitemradio').nth(target.index).click()
+    // By position (several tracks can have the same name), in the menu's order: by first letter.
+    const order = await page.evaluate(() => (window as unknown as { __tabsPlayer: { getSnapshot(): { tracks: Array<{ index: number; name: string }> } } }).__tabsPlayer.getSnapshot().tracks)
+    await menu.getByRole('menuitemradio').nth(sortByName(order, (track) => track.name).findIndex((track) => track.index === target.index)).click()
     await menu.waitFor({ state: 'detached' })
     const set = await snapshot()
     assert(set.trackSwitches['1'] === target.index && set.switchMarks.length === 1, `the switch was not set: ${JSON.stringify(set.trackSwitches)}`)
@@ -1066,9 +1069,9 @@ async function main() {
     await page.waitForTimeout(300)
     assert((await page.locator('main').getAttribute('data-status')) === 'ready', 'the song should still be ready after the tone page')
   }
-  await check('stems page: works without a song, shows the computer, keeps an open song, says why it cannot separate here', async () => {
-    // The test backend has no separation model (it lives in the real data/), so the server turns the job down;
-    // the browser logs that refused request, which is expected here.
+  await check('transcribe page: works without a song, shows the computer above both tools, keeps an open song, says the models are missing', async () => {
+    // The test backend has neither the separation nor the MIDI model (they live in the real data/), so neither tool
+    // can start; a request the server turned down would be logged by the browser, which is expected here.
     const errorsBefore = pageErrors.length
     const recording = path.join(dataDir, 'tone.wav')
     writeFileSync(recording, sineWav(1, 220))
@@ -1077,43 +1080,64 @@ async function main() {
       const fresh = await context.newPage()
       try {
         await fresh.goto(`${BASE}/#/stems`)
-        const alone = fresh.getByRole('region', { name: '分轨' })
-        await alone.getByRole('button', { name: '导入音频…' }).waitFor()
+        const alone = fresh.getByRole('region', { name: '转谱' })
+        await alone.getByRole('region', { name: '音轨分离' }).getByRole('button', { name: '导入音频…' }).waitFor()
+        await alone.getByRole('region', { name: '音频转 MIDI' }).getByRole('button', { name: '导入音频…' }).waitFor()
         await alone.getByRole('radio', { name: /CPU/ }).waitFor()
         assert((await alone.getByRole('navigation', { name: '分轨记录' }).locator('li').count()) === 0, 'a fresh library should list no separations')
+        assert((await alone.getByRole('navigation', { name: '转换记录' }).locator('li').count()) === 0, 'a fresh library should list no transcriptions')
       } finally {
         await fresh.close()
       }
       await stemPlayback()
 
-      await page.locator('header').getByRole('link', { name: '分轨' }).click()
-      const stems = page.getByRole('region', { name: '分轨' })
+      await page.locator('header').getByRole('link', { name: '转谱' }).click()
+      const stems = page.getByRole('region', { name: '转谱' })
       await stems.waitFor()
-      assert(page.url().endsWith('#/stems'), `the stems page is at ${page.url()}`)
-      assert((await page.locator('header').getByRole('link', { name: '分轨' }).getAttribute('aria-current')) === 'page', 'the switch should show the stems page as current')
-      // The CPU by name; without a model (or a card) here, the graphics card cannot be picked.
+      assert(page.url().endsWith('#/stems'), `the transcribe page is at ${page.url()}`)
+      assert((await page.locator('header').getByRole('link', { name: '转谱' }).getAttribute('aria-current')) === 'page', 'the switch should show the transcribe page as current')
+      // The CPU by name; the graphics card is picked when the backend finds one, else it cannot be picked.
       const devices = stems.getByRole('radiogroup', { name: '处理设备' })
       const cpu = devices.getByRole('radio', { name: /CPU/ })
       await cpu.waitFor()
       assert((await cpu.textContent())?.includes(cpus()[0].model.trim()), `the CPU is shown as ${await cpu.textContent()}`)
-      assert((await cpu.getAttribute('aria-checked')) === 'true', 'the CPU should be picked when there is no graphics card to use')
-      assert(await devices.getByRole('radio', { name: /显卡/ }).isDisabled(), 'the graphics card should not be pickable here')
-      await stems.getByText(/分轨失败：.*separation model is missing/).waitFor()
+      const found = (await (await fetch(`http://127.0.0.1:${API_PORT}/api/stems/devices`)).json()) as { gpus: unknown[] }
+      const card = devices.getByRole('radio', { name: /显卡/ })
+      if (found.gpus.length > 0) {
+        assert((await card.getAttribute('aria-checked')) === 'true', 'the graphics card should be picked when there is one')
+      } else {
+        assert((await cpu.getAttribute('aria-checked')) === 'true', 'the CPU should be picked when there is no graphics card to use')
+        assert(await card.isDisabled(), 'the graphics card should not be pickable without one')
+      }
 
-      // The model box shows the model, and that its files are not here.
-      const model = stems.getByRole('region', { name: '模型' })
-      await model.getByText('缺少模型文件').waitFor()
-      assert((await model.getByRole('combobox', { name: '模型' }).inputValue()) === 'bs-roformer-sw', 'the model should be BS-RoFormer SW')
+      // Each tool shows its model, and that its files are not here.
+      const separation = stems.getByRole('region', { name: '音轨分离' })
+      const midi = stems.getByRole('region', { name: '音频转 MIDI' })
+      // Both tools list whatever their model directory holds: nothing in the test backend's.
+      const separationModel = separation.getByRole('region', { name: '模型' })
+      await separationModel.getByText(/没有找到模型/).waitFor()
+      assert((await separationModel.getByRole('combobox').count()) === 0, 'there should be no separation model to pick')
+      // The MIDI models are whatever the model directory holds: none in the test backend's.
+      const midiModel = midi.getByRole('region', { name: '模型' })
+      await midiModel.getByText(/没有找到模型/).waitFor()
+      assert((await midiModel.getByRole('combobox').count()) === 0, 'there should be no model to pick')
 
-      // Importing only picks the file; the separation waits for "start" (which cannot start without the model).
-      await stems.locator('input[type="file"]').setInputFiles(recording)
-      await stems.getByText('tone.wav', { exact: true }).waitFor()
-      const start = stems.getByRole('button', { name: '开始分离音轨' })
-      assert(await start.isDisabled(), 'the separation should not start without the model')
-      assert((await stems.getByRole('navigation', { name: '分轨记录' }).locator('li').count()) === 0, 'picking a file should not start a separation')
+      // Importing only picks the file; each tool waits for "start" (which cannot start without its model).
+      const tools = [
+        { tool: separation, start: '开始分离音轨', list: '分轨记录' },
+        { tool: midi, start: '开始转换', list: '转换记录' },
+      ]
+      for (const { tool, start, list } of tools) {
+        await tool.locator('input[type="file"]').setInputFiles(recording)
+        await tool.getByText('tone.wav', { exact: true }).waitFor()
+        assert(await tool.getByRole('button', { name: start }).isDisabled(), `"${start}" should not start without the model`)
+        assert((await tool.getByRole('navigation', { name: list }).locator('li').count()) === 0, 'picking a file should not start a job')
+      }
       await shot(page, '18-stems')
-      await stems.getByRole('button', { name: '移除' }).click()
-      await stems.getByText('tone.wav', { exact: true }).waitFor({ state: 'detached' })
+      for (const { tool } of tools) {
+        await tool.getByRole('button', { name: '移除' }).click()
+        await tool.getByText('tone.wav', { exact: true }).waitFor({ state: 'detached' })
+      }
       await page.locator('header').getByTitle('返回曲谱').click()
       await stems.waitFor({ state: 'detached' })
       assert(/#\/song\/\d+$/.test(page.url()), `back at ${page.url()}`)
@@ -1138,6 +1162,22 @@ async function main() {
     writeFileSync(
       path.join(dir, 'stems.json'),
       JSON.stringify({ id: 'e2estems', name: 'E2E 分轨', sourceName: 'e2e.wav', createdAt: new Date().toISOString(), device: 'cuda', stems: stems.map(({ name, rmsDb }) => ({ name, file: `${name}.flac`, rmsDb })) }),
+    )
+    const midiDir = path.join(dataDir, 'tmps', 'transcriptions', 'e2emidi')
+    mkdirSync(midiDir, { recursive: true })
+    writeFileSync(path.join(midiDir, 'transcription.mid'), 'MThd-E2E')
+    writeFileSync(
+      path.join(midiDir, 'transcription.json'),
+      JSON.stringify({
+        id: 'e2emidi',
+        name: 'E2E MIDI',
+        sourceName: 'e2e.wav',
+        createdAt: new Date().toISOString(),
+        device: 'cuda',
+        model: 'muscriptor-small',
+        instruments: 'auto',
+        midi: { file: 'transcription.mid', notes: 812, parts: ['distorted_electric_guitar', 'electric_bass'], bpm: 127.8, seconds: 30 },
+      }),
     )
     const tapped = await context.newPage()
     try {
@@ -1170,21 +1210,35 @@ async function main() {
       })
       await tapped.goto(`${BASE}/#/stems`)
       const level = () => tapped.evaluate(() => (window as unknown as { __stemLevel: () => number }).__stemLevel())
-      const region = tapped.getByRole('region', { name: '分轨' })
+      const region = tapped.getByRole('region', { name: '音轨分离' })
 
-      // Laid out as asked: the device (card above CPU) and the wider audio box on one row, the stems under both.
+      // Laid out as asked: the device (card beside CPU) above both tools; in each, the model and the wider audio
+      // box on one row, the job looked at under both; stem separation above audio to MIDI.
       await tapped.locator('section[aria-label="E2E 分轨"]').waitFor()
-      await region.getByRole('radio', { name: /CPU/ }).waitFor()
+      await tapped.getByRole('radio', { name: /CPU/ }).waitFor()
       const boxes = await tapped.evaluate(() => {
         const box = (selector: string) => document.querySelector(selector)!.getBoundingClientRect()
+        const inTool = (tool: string, part: string) => box(`section[aria-label="${tool}"] section[aria-label="${part}"]`)
         const radios = [...document.querySelectorAll('section[aria-label="处理设备"] [role="radio"]')].map((radio) => radio.getBoundingClientRect())
-        return { device: box('section[aria-label="处理设备"]'), model: box('section[aria-label="模型"]'), audio: box('section[aria-label="音频"]'), stems: box('section[aria-label="E2E 分轨"]'), radios }
+        return {
+          device: box('section[aria-label="处理设备"]'),
+          separation: box('section[aria-label="音轨分离"]'),
+          midi: box('section[aria-label="音频转 MIDI"]'),
+          rows: [
+            [inTool('音轨分离', '模型'), inTool('音轨分离', '音频')],
+            [inTool('音频转 MIDI', '模型'), inTool('音频转 MIDI', '音频')],
+          ],
+          stems: box('section[aria-label="E2E 分轨"]'),
+          radios,
+        }
       })
-      assert(Math.abs(boxes.device.top - boxes.audio.top) < 2 && Math.abs(boxes.model.top - boxes.audio.top) < 2, `the device, model and audio boxes are not on one row (${JSON.stringify(boxes)})`)
-      assert(boxes.device.right <= boxes.model.left && boxes.model.right <= boxes.audio.left, 'the model box should be between the device and the audio boxes')
-      assert(boxes.audio.width > boxes.device.width && boxes.audio.width > boxes.model.width, 'the audio box should be the widest')
-      assert(boxes.stems.top >= Math.max(boxes.device.bottom, boxes.model.bottom, boxes.audio.bottom), 'the stems should come under the three boxes')
-      assert(boxes.radios.length === 2 && boxes.radios[1].top >= boxes.radios[0].bottom, 'the graphics card and the CPU should be one above the other')
+      assert(boxes.device.bottom <= boxes.separation.top && boxes.separation.bottom <= boxes.midi.top, `the device, the separation and the MIDI should come in that order (${JSON.stringify(boxes)})`)
+      assert(boxes.radios.length === 2 && Math.abs(boxes.radios[0].top - boxes.radios[1].top) < 2 && boxes.radios[0].right <= boxes.radios[1].left, 'the graphics card and the CPU should be side by side')
+      for (const [model, audio] of boxes.rows) {
+        assert(Math.abs(model.top - audio.top) < 2 && model.right <= audio.left, 'the model and audio boxes should be on one row, the model first')
+        assert(audio.width > model.width, 'the audio box should be the wider')
+      }
+      assert(boxes.stems.top >= Math.max(boxes.rows[0][0].bottom, boxes.rows[0][1].bottom), 'the stems should come under the model and audio boxes')
 
       const player = region.getByRole('group', { name: '分轨播放' })
       const play = player.getByRole('button', { name: '播放' })
@@ -1220,9 +1274,22 @@ async function main() {
       await player.getByRole('button', { name: '暂停' }).click()
       await tapped.waitForTimeout(300)
       assert((await level()) < 0.002, 'still sounding after pause')
+
+      // A finished transcription (put in place like the separation): what is in the MIDI, and its download.
+      const midi = tapped.getByRole('region', { name: '音频转 MIDI' })
+      const result = midi.getByRole('region', { name: 'E2E MIDI' })
+      await result.getByText('共 812 个音符，速度约 128 BPM').waitFor()
+      await result.getByText('识别出的乐器：失真电吉他、电贝斯').waitFor()
+      const download = result.getByRole('link', { name: '下载 MIDI' })
+      assert((await download.getAttribute('download')) === 'E2E MIDI.mid', `the MIDI downloads as ${await download.getAttribute('download')}`)
+      const served = await fetch(new URL((await download.getAttribute('href'))!, BASE))
+      assert(served.headers.get('content-type') === 'audio/midi' && (await served.text()) === 'MThd-E2E', 'the MIDI is not served')
+      await result.scrollIntoViewIfNeeded()
+      await shot(tapped, '20b-midi-result')
     } finally {
       await tapped.close()
       rmSync(dir, { recursive: true, force: true })
+      rmSync(midiDir, { recursive: true, force: true })
     }
   }
   await check('the top bar panels stay inside the window', async () => {
@@ -1531,6 +1598,63 @@ async function main() {
     await page.waitForFunction(() => document.querySelectorAll('main li').length === 1)
   })
 
+  await check('importing a MIDI file writes it out as a tab: guitar strings, drums, tempo, bars', async () => {
+    // A made-up exercise: an E minor arpeggio in 8ths over four bars, a kick and snare, at 100 BPM.
+    const arpeggio = [40, 47, 52, 55, 59, 55, 52, 47]
+    const midiPath = path.join(mkdtempSync(path.join(tmpdir(), 'tabs-midi-')), 'Arpeggio 练习.mid')
+    writeFileSync(
+      midiPath,
+      writeMidi({
+        tempos: [[0, 100]],
+        tracks: [
+          { name: 'Guitar', program: 25, notes: Array.from({ length: 32 }, (_, index) => ({ at: index * 0.5, length: 0.5, pitch: arpeggio[index % 8] })) },
+          { channel: 9, notes: Array.from({ length: 16 }, (_, index) => ({ at: index, length: 0.1, pitch: index % 2 ? 38 : 36 })) },
+        ],
+      }),
+    )
+    await page.getByRole('button', { name: '新建曲谱' }).click()
+    await page.getByLabel('曲谱文件').setInputFiles(midiPath)
+    await waitReady(page)
+    await page.locator('header').getByText('Arpeggio 练习', { exact: true }).waitFor()
+    type Shape = { __tabsPlayer: { api: { score: { tempo: number; masterBars: unknown[]; tracks: Array<{ staves: Array<{ tuning: number[]; isPercussion: boolean }> }> } } } }
+    const shape = await page.evaluate(() => {
+      const score = (window as unknown as Shape).__tabsPlayer.api.score
+      return { tempo: score.tempo, bars: score.masterBars.length, strings: score.tracks[0].staves[0].tuning.length, drums: score.tracks[1]?.staves[0].isPercussion }
+    })
+    assert(shape.tempo === 100 && shape.bars === 4 && shape.strings === 6 && shape.drums === true, `the MIDI tab is ${JSON.stringify(shape)}`)
+    await page.locator('main svg').first().waitFor({ state: 'attached', timeout: 8000 }).catch(() => undefined)
+    assert((await page.locator('main svg').count()) > 0, 'the MIDI tab did not render')
+    await shot(page, '19b-midi-import')
+
+    // "Delete track" in the track editor: the drums go from the tab, which is saved as the song's edited tab;
+    // the last track left cannot be deleted. (The confirm dialog is accepted by the page's handler.)
+    type Tracks = { __tabsPlayer: { api: { score: { tracks: Array<{ name: string }> } }; getSnapshot(): { tracks: Array<{ index: number; name: string }> } } }
+    await control(page, '乐器').click()
+    await page.getByRole('dialog', { name: '乐器与混音' }).getByRole('button', { name: '编辑 Drums' }).click()
+    const editor = page.getByRole('dialog', { name: '编辑音轨' })
+    await editor.getByRole('button', { name: '删除音轨' }).click()
+    await editor.waitFor({ state: 'detached' })
+    await page.waitForFunction(() => (window as unknown as Tracks).__tabsPlayer.api.score.tracks.length === 1, undefined, { timeout: 15_000 })
+    const left = await page.evaluate(() => {
+      const player = (window as unknown as Tracks).__tabsPlayer
+      return { score: player.api.score.tracks.map((track) => track.name), list: player.getSnapshot().tracks.map((track) => [track.index, track.name]) }
+    })
+    assert(JSON.stringify(left) === JSON.stringify({ score: ['Guitar'], list: [[0, 'Guitar']] }), `after deleting the drums: ${JSON.stringify(left)}`)
+    const songId = Number(new URL(page.url()).hash.match(/\d+/)?.[0])
+    const stored = (await (await fetch(`http://127.0.0.1:${API_PORT}/api/songs/${songId}`)).json()) as { edited: boolean }
+    assert(stored.edited, 'the tab without the drums should be saved as the edited tab')
+    if (!(await page.getByRole('dialog', { name: '乐器与混音' }).isVisible())) await control(page, '乐器').click()
+    await page.getByRole('dialog', { name: '乐器与混音' }).getByRole('button', { name: '编辑 Guitar' }).click()
+    assert(await editor.getByRole('button', { name: '删除音轨' }).isDisabled(), 'the only track left should not be deletable')
+    // The mixer popover takes the first Escape (it stops it there), the editor the next.
+    for (const name of ['乐器与混音', '编辑音轨']) if (await page.getByRole('dialog', { name }).isVisible()) await page.keyboard.press('Escape')
+    await editor.waitFor({ state: 'detached' })
+    await page.getByRole('link', { name: '曲库首页' }).click()
+    await page.getByRole('heading', { name: '我的曲谱' }).waitFor()
+    await page.locator('main li').filter({ hasText: 'Arpeggio 练习' }).getByRole('button', { name: '删除' }).click()
+    await page.waitForFunction(() => document.querySelectorAll('main li').length === 1)
+  })
+
   console.log('narrow window')
   await check('at 900px the control bar is still one row and nothing overflows', async () => {
     const left = (await (await fetch(`http://127.0.0.1:${API_PORT}/api/songs`)).json()) as Array<{ source: string }>
@@ -1562,10 +1686,10 @@ async function main() {
     await shot(page, '11-narrow')
   })
 
-  await check('the player plays the best sound font the server has (data/soundfonts/)', async () => {
+  await check('the player plays the best sound font the server has (Default.sf2 in resources/soundfonts/)', async () => {
     const fonts = requested.filter((url) => /soundfont/i.test(url) && /\.sf[23]$/i.test(url))
-    if (existsSync(path.join(root, 'data/soundfonts/GeneralUser-GS.sf2'))) {
-      assert(fonts.includes('/api/soundfonts/GeneralUser-GS.sf2'), `loaded ${fonts.join(', ') || 'no sound font'}`)
+    if (existsSync(path.join(root, 'resources/soundfonts/Default.sf2'))) {
+      assert(fonts.includes('/api/soundfonts/Default.sf2'), `loaded ${fonts.join(', ') || 'no sound font'}`)
     } else {
       assert(fonts.some((url) => url.endsWith('/soundfont/sonivox.sf2')), `loaded ${fonts.join(', ') || 'no sound font'}`)
     }

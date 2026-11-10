@@ -134,7 +134,6 @@ export function TonePage() {
                   )
                 })}
               </ul>
-              {state.soundFonts.length === 0 && <p className={panel.hint}>{t('没有采样音色库，正在用内置的小音色库。')}</p>}
             </div>
           </nav>
           <nav className={styles.toneList} aria-label={t('效果器音色库')}>

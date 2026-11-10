@@ -1,12 +1,13 @@
 node_modules/
 dist/
-data/
 *.local
 .DS_Store
 web/public/font/
 web/public/soundfont/
 
-# Kept locally only: the version control holds the app (web/, server/) and the config files.
-*.md
+# data/ is the user's own (user.db, the song folders, sound fonts and models put there by hand), made on first start.
+/data
 docs/
 test/shots/
+# The test songs are the online tabs' own content: downloaded by `npm run fixtures`, never published.
+test/songs/

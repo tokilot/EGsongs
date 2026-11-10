@@ -1,6 +1,8 @@
-import { existsSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
+import type { CachedRevision } from '../songs/client.ts'
+import type { SongFolders } from '../songs/songFolders.ts'
 
 export type SongSource = 'songsterr' | 'file'
 
@@ -53,6 +55,7 @@ interface SongRow {
   revision_id: number | null
   revision_date: string | null
   file_name: string | null
+  folder: string | null
   track_count: number
   default_track: number
   favorite: number
@@ -62,8 +65,22 @@ interface SongRow {
   last_opened_at: string | null
 }
 
-/** A song's tab file: what was uploaded, or the copy changed in the editor (Guitar Pro 7). */
-type FileKind = 'source' | 'edited'
+/**
+ * A favourite's tab content in user.db: what was uploaded, the online revision (its meta and tracks, as JSON), or
+ * the copy changed in the editor (Guitar Pro 7).
+ */
+type FileKind = 'source' | 'online' | 'edited'
+
+/** The tab changed in the editor, next to the content of a song that is not a favourite. */
+const EDITED_FILE = 'edited.gp'
+
+/** The online cache (songs/client.ts), where the tabs of songs imported by link are, unless they are favourites. */
+export interface OnlineCache {
+  cached(songId: number, revisionId: number): Promise<CachedRevision | null>
+  store(revision: CachedRevision): Promise<void>
+  /** The folder a revision is cached in, or null when it is not cached. */
+  cacheFolder(songId: number, revisionId: number): string | null
+}
 
 const FILES_SCHEMA = `
 CREATE TABLE IF NOT EXISTS song_files (
@@ -124,20 +141,29 @@ function toSong(row: SongRow): Song {
 }
 
 /**
- * The library: every song's details, practice settings and tab files, all in data/user.db, the same whether a song was
- * uploaded or imported by link (the online tabs themselves are cached in data/songs/).
+ * The library: every song's details and practice settings in data/user.db. Where its tab is depends on whether it is
+ * a favourite (user's choice, 2026-11-10): a favourite's tab (uploaded file, online revision, edited copy) is kept in
+ * user.db; any other song's is only in data/songs/ (its own numbered folder for an uploaded file, the online cache
+ * for a link), so it goes when that folder does. Starring and unstarring move it.
  */
 export class Library {
   private readonly db: DatabaseSync
+  private readonly folders: SongFolders
+  private readonly online: OnlineCache
+  private readonly dataDir: string
 
-  /** `db`: data/user.db (openUserDb), which it closes with close(). */
-  constructor(db: DatabaseSync, dataDir: string) {
+  /** `db`: data/user.db (openUserDb), which it closes with close(). `folders`: data/songs/. */
+  constructor(db: DatabaseSync, dataDir: string, folders: SongFolders, online: OnlineCache) {
     this.db = db
+    this.dataDir = dataDir
+    this.folders = folders
+    this.online = online
     this.db.exec(SCHEMA)
     this.db.exec(FILES_SCHEMA)
-    // Added after the first release; older libraries get the column on first start.
+    // Added after the first release; older libraries get the columns on first start.
     const columns = this.db.prepare('PRAGMA table_info(songs)').all() as unknown as Array<{ name: string }>
     if (!columns.some((column) => column.name === 'edited')) this.db.exec('ALTER TABLE songs ADD COLUMN edited INTEGER NOT NULL DEFAULT 0')
+    if (!columns.some((column) => column.name === 'folder')) this.db.exec('ALTER TABLE songs ADD COLUMN folder TEXT')
     this.bringInTabFiles(path.join(dataDir, 'tabs'))
   }
 
@@ -146,14 +172,29 @@ export class Library {
     if (!existsSync(dir)) return
     const rows = this.db.prepare('SELECT * FROM songs').all() as unknown as SongRow[]
     for (const song of rows.map(toSong)) {
-      const take = (name: string, kind: FileKind) => {
+      const take = (name: string, kind: 'source' | 'edited') => {
         const old = path.join(dir, name)
-        if (existsSync(old)) this.putFile(song.id, kind, readFileSync(old))
+        if (existsSync(old)) this.place(song, kind, new Uint8Array(readFileSync(old)))
       }
       if (song.source === 'file' && song.fileName) take(`${song.id}.${extensionOf(song.fileName)}`, 'source')
       if (song.edited) take(`${song.id}.edited.gp`, 'edited')
     }
     rmSync(dir, { recursive: true, force: true })
+  }
+
+  /** Puts one of a song's files where it belongs now: user.db for a favourite, else its folder in data/songs/. */
+  private place(song: Song, kind: 'source' | 'edited', bytes: Uint8Array) {
+    if (song.favorite) return this.putFile(song.id, kind, bytes)
+    let folder = this.contentFolder(song)
+    if (!folder && song.source === 'file' && song.fileName) {
+      const made = this.folders.create({ kind: 'file', fileName: song.fileName })
+      this.db.prepare('UPDATE songs SET folder = ? WHERE id = ?').run(made, song.id)
+      folder = this.folders.path(made)
+    }
+    // An online song's edited copy with its revision not cached: kept in user.db rather than lost.
+    if (!folder) return this.putFile(song.id, kind, bytes)
+    writeFileSync(path.join(folder, kind === 'edited' ? EDITED_FILE : song.fileName!), bytes)
+    this.dropFile(song.id, kind)
   }
 
   private putFile(id: number, kind: FileKind, bytes: Uint8Array) {
@@ -165,21 +206,82 @@ export class Library {
     return row ? new Uint8Array(row.bytes) : null
   }
 
+  private dropFile(id: number, kind: FileKind) {
+    this.db.prepare('DELETE FROM song_files WHERE song_id = ? AND kind = ?').run(id, kind)
+  }
+
+  /** Where a song that is not a favourite has its tab: its own folder (uploaded) or its revision's cache folder (link). */
+  private contentFolder(song: Song & { folder?: string | null }): string | null {
+    if (song.source === 'file') {
+      const folder = this.folderOf(song.id)
+      return folder ? this.folders.path(folder) : null
+    }
+    return song.songsterrId !== null && song.revisionId !== null ? this.online.cacheFolder(song.songsterrId, song.revisionId) : null
+  }
+
+  private folderOf(id: number): string | null {
+    const row = this.db.prepare('SELECT folder FROM songs WHERE id = ?').get(id) as { folder: string | null } | undefined
+    return row?.folder ?? null
+  }
+
+  /**
+   * Puts what was kept the old way where it now belongs (2026-11-10), after a copy of user.db: the files of uploaded
+   * songs that are not favourites go to their folders, the online tabs of favourites into user.db. Run when the
+   * server starts; returns how many songs moved.
+   */
+  async bringIntoPlace(): Promise<number> {
+    const rows = (this.db.prepare('SELECT * FROM songs').all() as unknown as SongRow[]).map((row) => ({ ...toSong(row), folder: row.folder }))
+    const has = (id: number, kind: FileKind) => this.db.prepare('SELECT 1 FROM song_files WHERE song_id = ? AND kind = ?').get(id, kind) !== undefined
+    const moving = rows.filter((song) =>
+      song.favorite ? song.source === 'songsterr' && !has(song.id, 'online') : has(song.id, 'source') || has(song.id, 'edited'),
+    )
+    if (moving.length === 0) return 0
+    const backup = path.join(this.dataDir, `user.db.before-2026-11-10.bak`)
+    if (!existsSync(backup)) this.db.exec(`VACUUM INTO '${backup.replaceAll("'", "''")}'`)
+    let moved = 0
+    for (const song of moving) {
+      if (song.favorite) {
+        const revision = song.songsterrId !== null && song.revisionId !== null ? await this.online.cached(song.songsterrId, song.revisionId) : null
+        if (!revision) continue
+        this.putFile(song.id, 'online', new TextEncoder().encode(JSON.stringify(revision)))
+      } else {
+        await this.moveOut(song)
+      }
+      moved++
+    }
+    return moved
+  }
+
   /** The tab as changed in the editor (a Guitar Pro 7 file), or null when it has not been edited. */
   async readEdited(song: Song): Promise<Uint8Array | null> {
-    return song.edited ? this.getFile(song.id, 'edited') : null
+    if (!song.edited) return null
+    const folder = song.favorite ? null : this.contentFolder(song)
+    if (folder && existsSync(path.join(folder, EDITED_FILE))) return new Uint8Array(readFileSync(path.join(folder, EDITED_FILE)))
+    return this.getFile(song.id, 'edited')
   }
 
   async saveEdited(id: number, bytes: Uint8Array): Promise<Song | null> {
-    if (!this.get(id)) return null
-    this.putFile(id, 'edited', bytes)
+    const song = this.get(id)
+    if (!song) return null
+    const folder = song.favorite ? null : this.contentFolder(song)
+    if (folder) {
+      writeFileSync(path.join(folder, EDITED_FILE), bytes)
+      this.dropFile(id, 'edited')
+    } else {
+      // A favourite's, or (should its folder be gone) kept with the song rather than lost.
+      this.putFile(id, 'edited', bytes)
+    }
     this.db.prepare('UPDATE songs SET edited = 1 WHERE id = ?').run(id)
     return this.get(id)
   }
 
   /** Back to the tab as imported. */
   async discardEdited(id: number): Promise<Song | null> {
-    this.db.prepare("DELETE FROM song_files WHERE song_id = ? AND kind = 'edited'").run(id)
+    const song = this.get(id)
+    if (!song) return null
+    this.dropFile(id, 'edited')
+    const folder = this.contentFolder(song)
+    if (folder) rmSync(path.join(folder, EDITED_FILE), { force: true })
     this.db.prepare('UPDATE songs SET edited = 0 WHERE id = ?').run(id)
     return this.get(id)
   }
@@ -214,6 +316,7 @@ export class Library {
     return row ? toSong(row) : null
   }
 
+  /** A song imported by link; its tab stays in the online cache until it is starred. */
   addSongsterr(input: SongsterrSongInput): Song {
     const result = this.db
       .prepare(
@@ -234,14 +337,20 @@ export class Library {
     return this.get(Number(result.lastInsertRowid))!
   }
 
-  /** Points a Songsterr song at another revision of itself. */
-  setRevision(id: number, input: Pick<SongsterrSongInput, 'revisionId' | 'revisionDate' | 'trackCount' | 'defaultTrack'>): Song | null {
+  /** Points a Songsterr song at another revision of itself (already cached); a favourite keeps the new one in user.db. */
+  async setRevision(id: number, input: Pick<SongsterrSongInput, 'revisionId' | 'revisionDate' | 'trackCount' | 'defaultTrack'>): Promise<Song | null> {
     this.db
       .prepare('UPDATE songs SET revision_id = ?, revision_date = ?, track_count = ?, default_track = ? WHERE id = ?')
       .run(input.revisionId, input.revisionDate, input.trackCount, input.defaultTrack, id)
-    return this.get(id)
+    const song = this.get(id)
+    if (song?.favorite && song.songsterrId !== null) {
+      const revision = await this.online.cached(song.songsterrId, input.revisionId)
+      if (revision) this.putFile(id, 'online', new TextEncoder().encode(JSON.stringify(revision)))
+    }
+    return song
   }
 
+  /** An uploaded tab, in a new numbered folder of data/songs/ until it is starred. */
   async addFile(originalName: string, bytes: Uint8Array): Promise<Song> {
     const baseName = path.basename(originalName.replace(/\\/g, '/'))
     const extension = extensionOf(baseName)
@@ -249,20 +358,37 @@ export class Library {
       throw new Error(`Unsupported file type ".${extension}". Supported: ${TAB_EXTENSIONS.join(', ')}.`)
     }
     const title = path.basename(baseName, path.extname(baseName)).trim() || 'Untitled'
+    const folder = this.folders.create({ kind: 'file', fileName: baseName })
+    writeFileSync(this.folders.path(folder, baseName), bytes)
     const result = this.db
-      .prepare("INSERT INTO songs (source, title, artist, file_name, created_at) VALUES ('file', ?, '', ?, ?)")
-      .run(title, baseName, new Date().toISOString())
-    const id = Number(result.lastInsertRowid)
-    this.putFile(id, 'source', bytes)
-    return this.get(id)!
+      .prepare("INSERT INTO songs (source, title, artist, file_name, folder, created_at) VALUES ('file', ?, '', ?, ?, ?)")
+      .run(title, baseName, folder, new Date().toISOString())
+    return this.get(Number(result.lastInsertRowid))!
   }
 
-  /** The uploaded tab file, or null (songs imported by link have none: their tracks are in the online cache). */
+  /** The uploaded tab file, or null (songs imported by link have none: see readOnline). */
   async readFile(song: Song): Promise<Uint8Array | null> {
-    return song.source === 'file' ? this.getFile(song.id, 'source') : null
+    if (song.source !== 'file') return null
+    if (song.favorite) return this.getFile(song.id, 'source')
+    const folder = this.contentFolder(song)
+    const file = folder && song.fileName ? path.join(folder, song.fileName) : null
+    return file && existsSync(file) ? new Uint8Array(readFileSync(file)) : null
   }
 
-  update(id: number, changes: { favorite?: boolean; settings?: SongSettings; title?: string; artist?: string; trackCount?: number }): Song | null {
+  /** A favourite's online revision as kept in user.db, or null (any other song: the online cache). */
+  readOnline(song: Song): CachedRevision | null {
+    if (!song.favorite || song.source !== 'songsterr') return null
+    const bytes = this.getFile(song.id, 'online')
+    return bytes ? (JSON.parse(new TextDecoder().decode(bytes)) as CachedRevision) : null
+  }
+
+  async update(id: number, changes: { favorite?: boolean; settings?: SongSettings; title?: string; artist?: string; trackCount?: number }): Promise<Song | null> {
+    const song = this.get(id)
+    if (!song) return null
+    if (changes.favorite !== undefined && changes.favorite !== song.favorite) {
+      if (changes.favorite) await this.moveIn(song)
+      else await this.moveOut(song)
+    }
     const sets: string[] = []
     const params: Array<string | number> = []
     if (changes.favorite !== undefined) {
@@ -289,32 +415,101 @@ export class Library {
     return this.get(id)
   }
 
+  /** Starred: the tab (and its edited copy) from data/songs/ into user.db; an uploaded song's folder goes. */
+  private async moveIn(song: Song) {
+    const folder = this.contentFolder(song)
+    if (song.source === 'file') {
+      const bytes = await this.readFile(song)
+      if (bytes) this.putFile(song.id, 'source', bytes)
+    } else if (song.songsterrId !== null && song.revisionId !== null) {
+      const revision = await this.online.cached(song.songsterrId, song.revisionId)
+      if (revision) this.putFile(song.id, 'online', new TextEncoder().encode(JSON.stringify(revision)))
+    }
+    const edited = folder ? path.join(folder, EDITED_FILE) : null
+    if (edited && existsSync(edited)) {
+      this.putFile(song.id, 'edited', new Uint8Array(readFileSync(edited)))
+      rmSync(edited, { force: true })
+    }
+    if (song.source === 'file') {
+      const own = this.folderOf(song.id)
+      if (own) this.folders.remove(own)
+      this.db.prepare('UPDATE songs SET folder = NULL WHERE id = ?').run(song.id)
+    }
+  }
+
+  /** Unstarred (or moved the new way): the tab and its edited copy from user.db into data/songs/. */
+  private async moveOut(song: Song) {
+    let folder: string | null = null
+    if (song.source === 'file') {
+      const bytes = this.getFile(song.id, 'source')
+      if (bytes && song.fileName) {
+        const made = this.folders.create({ kind: 'file', fileName: song.fileName })
+        writeFileSync(this.folders.path(made, song.fileName), bytes)
+        this.db.prepare('UPDATE songs SET folder = ? WHERE id = ?').run(made, song.id)
+        folder = this.folders.path(made)
+      }
+      this.dropFile(song.id, 'source')
+    } else if (song.songsterrId !== null && song.revisionId !== null) {
+      const kept = this.readOnline({ ...song, favorite: true })
+      if (kept && !(await this.online.cached(song.songsterrId, song.revisionId))) await this.online.store(kept)
+      this.dropFile(song.id, 'online')
+      folder = this.online.cacheFolder(song.songsterrId, song.revisionId)
+    }
+    const edited = this.getFile(song.id, 'edited')
+    if (edited && folder) {
+      writeFileSync(path.join(folder, EDITED_FILE), edited)
+      this.dropFile(song.id, 'edited')
+    }
+  }
+
   /** Marks the song as opened now, which moves it to the top of the list. */
   touch(id: number): Song | null {
     this.db.prepare('UPDATE songs SET last_opened_at = ? WHERE id = ?').run(new Date().toISOString(), id)
     return this.get(id)
   }
 
+  /** Deletes a song: its row, what user.db keeps of it, and its own folder (the online cache stays a cache). */
   async remove(id: number): Promise<boolean> {
     const song = this.get(id)
     if (!song) return false
+    const own = song.source === 'file' ? this.folderOf(id) : null
+    const cache = song.source === 'songsterr' && !song.favorite ? this.contentFolder(song) : null
     this.db.prepare('DELETE FROM songs WHERE id = ?').run(id)
     this.db.prepare('DELETE FROM song_files WHERE song_id = ?').run(id)
+    if (own) this.folders.remove(own)
+    if (cache) rmSync(path.join(cache, EDITED_FILE), { force: true })
     return true
   }
 
   /**
-   * Forgets what was only browsed: every song that is not a favorite goes (with its file, edited copy and practice
-   * settings), and no song keeps a "last opened" time. Run when the server starts (user's choice, 2026-10-31).
+   * The tabs that come with the app (resources/songs/demo/, 2026-11-11), put in a library that has never had a song,
+   * as favourites: on the first start only, so one the user deletes does not come back. Returns how many came in.
    */
-  async forgetBrowsing(): Promise<number> {
-    const passing = (this.db.prepare('SELECT id FROM songs WHERE favorite = 0').all() as unknown as Array<{ id: number }>).map((row) => row.id)
-    for (const id of passing) await this.remove(id)
-    this.db.exec('UPDATE songs SET last_opened_at = NULL')
-    if (passing.length > 0) this.db.exec('VACUUM')
-    return passing.length
+  async addDemos(dir: string): Promise<number> {
+    const sequence = this.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_sequence'").get()
+    const used = sequence && this.db.prepare("SELECT 1 FROM sqlite_sequence WHERE name = 'songs'").get()
+    if (used || !existsSync(dir)) return 0
+    const files = readdirSync(dir).filter((name) => TAB_EXTENSIONS.includes(extensionOf(name))).sort((a, b) => a.localeCompare(b))
+    for (const name of files) {
+      const song = await this.addFile(name, new Uint8Array(readFileSync(path.join(dir, name))))
+      await this.update(song.id, { favorite: true })
+    }
+    return files.length
   }
 
+  /**
+   * Songs that are not favourites stay between runs, last opened times too (user's choice, 2026-11-10), unless their
+   * tab is gone from data/songs/: those are dropped. Run when the server starts; returns how many went.
+   */
+  async dropMissing(): Promise<number> {
+    let dropped = 0
+    for (const song of this.list().filter((entry) => !entry.favorite)) {
+      const folder = this.contentFolder(song)
+      const there = song.source === 'file' ? folder !== null && song.fileName !== null && existsSync(path.join(folder, song.fileName)) : folder !== null && existsSync(path.join(folder, 'meta.json'))
+      if (!there && (await this.remove(song.id))) dropped++
+    }
+    return dropped
+  }
 }
 
 function extensionOf(fileName: string): string {

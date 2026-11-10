@@ -16,7 +16,7 @@ afterEach(() => {
 })
 
 function setup() {
-  const { app, library } = createApp({ dataDir, separator: { check: () => null, modelFiles: () => ({ available: true, bytes: 0 }), devices: async () => ({ gpus: [], torch: null, cuda: null }), run: () => ({ done: Promise.resolve(), cancel: () => {} }) } })
+  const { app, library } = createApp({ dataDir, separator: { check: () => null, models: () => [], devices: async () => ({ gpus: [], torch: null, cuda: null }), run: () => ({ done: Promise.resolve(), cancel: () => {} }) } })
   close = () => library.close()
   return app
 }

@@ -1,11 +1,16 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { SongFolders } from './songFolders.ts'
 
 // Everything we know about the undocumented Songsterr endpoints lives in this file.
 const SITE = 'https://www.songsterr.com'
 const TRACK_CDN = 'https://dqsljvtekg760.cloudfront.net'
 const USER_AGENT =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36'
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0'
+// Match the installed Edge's browser headers (verified 2026-11-06). The old Chrome/126.0 identity still works for
+// search but gets 403 for metadata, even with Accept-Language. Node's default language "*" is also rejected.
+// Use the same headers for search, metadata, revisions and tracks; restricted tabs are still refused below.
+const REQUEST_HEADERS = { 'User-Agent': USER_AGENT, Accept: 'application/json', 'Accept-Language': 'en-US,en;q=0.9' }
 
 export interface SongsterrTrackInfo {
   instrumentId: number
@@ -70,24 +75,78 @@ export function songUrl(meta: Pick<SongsterrMeta, 'songId' | 'artist' | 'title'>
 }
 
 export interface SongsterrClientOptions {
-  /** Directory holding `{songId}/{revisionId}/meta.json` and `{trackIndex}.json`. */
+  /**
+   * Directory of the cache: a numbered folder per revision (songFolders.ts) holding `meta.json` and
+   * `{trackIndex}.json`; or, with `layout: 'by-id'` (the test songs in test/songs/), `{songId}/{revisionId}/`.
+   */
   cacheDir: string
+  layout?: 'numbered' | 'by-id'
   fetch?: typeof fetch
   /** Minimum delay between two upstream requests. */
   minIntervalMs?: number
 }
 
+/** A revision as cached: its meta and every track. */
+export interface CachedRevision {
+  meta: SongsterrMeta
+  tracks: unknown[]
+}
+
 export class SongsterrClient {
   private readonly cacheDir: string
+  private readonly folders: SongFolders | null
+  /** `{songId}/{revisionId}` -> its numbered folder, read from the folders' origin.json once. */
+  private index: Map<string, string> | null = null
   private readonly fetchImpl: typeof fetch
   private readonly minIntervalMs: number
   private queue: Promise<unknown> = Promise.resolve()
   private lastRequestAt = 0
+  /** Revisions moved out of the `{songId}/{revisionId}/` cache of before 2026-11-10, when this started. */
+  readonly renumbered: number
 
   constructor(options: SongsterrClientOptions) {
     this.cacheDir = options.cacheDir
+    this.folders = options.layout === 'by-id' ? null : new SongFolders(options.cacheDir)
+    this.renumbered = this.folders?.numberLegacy() ?? 0
     this.fetchImpl = options.fetch ?? fetch
     this.minIntervalMs = options.minIntervalMs ?? 400
+  }
+
+  /** The folder a revision is cached in, or null when it is not cached (nothing is created). */
+  cacheFolder(songId: number, revisionId: number): string | null {
+    if (!this.folders) return path.join(this.cacheDir, String(songId), String(revisionId))
+    const folder = this.indexed().get(`${songId}/${revisionId}`)
+    return folder ? this.folders.path(folder) : null
+  }
+
+  /** The revision with every track, when all of it is cached; null when anything is missing. */
+  async cached(songId: number, revisionId: number): Promise<CachedRevision | null> {
+    const meta = await this.readCache<SongsterrMeta>(songId, revisionId, 'meta')
+    if (!meta) return null
+    const tracks: unknown[] = []
+    for (let index = 0; index < meta.tracks.length; index++) {
+      const track = await this.readCache<unknown>(songId, revisionId, String(index))
+      if (track === null) return null
+      tracks.push(track)
+    }
+    return { meta, tracks }
+  }
+
+  /** Puts a whole revision (kept elsewhere, e.g. with a favourite) back into the cache. */
+  async store(revision: CachedRevision): Promise<void> {
+    const { songId, revisionId } = revision.meta
+    await this.writeCache(songId, revisionId, 'meta', revision.meta)
+    for (const [index, track] of revision.tracks.entries()) await this.writeCache(songId, revisionId, String(index), track)
+  }
+
+  private indexed(): Map<string, string> {
+    if (!this.index) {
+      this.index = new Map()
+      for (const { folder, origin } of this.folders?.list() ?? []) {
+        if (origin?.kind === 'online') this.index.set(`${origin.songId}/${origin.revisionId}`, folder)
+      }
+    }
+    return this.index
   }
 
   /** Latest revision when `revisionId` is omitted (always asks upstream); a pinned revision is served from disk once fetched. */
@@ -156,7 +215,7 @@ export class SongsterrClient {
       this.lastRequestAt = Date.now()
       let response: Response
       try {
-        response = await this.fetchImpl(url, { headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' } })
+        response = await this.fetchImpl(url, { headers: REQUEST_HEADERS })
       } catch (error) {
         throw new SongsterrError(`Could not reach the tab site: ${(error as Error).message}`, 502)
       }
@@ -169,22 +228,26 @@ export class SongsterrClient {
     return result
   }
 
-  private file(songId: number, revisionId: number, name: string): string {
-    return path.join(this.cacheDir, String(songId), String(revisionId), `${name}.json`)
-  }
-
   private async readCache<T>(songId: number, revisionId: number, name: string): Promise<T | null> {
+    const folder = this.cacheFolder(songId, revisionId)
+    if (!folder) return null
     try {
-      return JSON.parse(await readFile(this.file(songId, revisionId, name), 'utf8')) as T
+      return JSON.parse(await readFile(path.join(folder, `${name}.json`), 'utf8')) as T
     } catch {
       return null
     }
   }
 
   private async writeCache(songId: number, revisionId: number, name: string, value: unknown): Promise<void> {
-    const file = this.file(songId, revisionId, name)
-    await mkdir(path.dirname(file), { recursive: true })
-    await writeFile(file, JSON.stringify(value))
+    let folder = this.cacheFolder(songId, revisionId)
+    if (!folder && this.folders) {
+      // Made (and indexed) before anything is awaited, so two writes for one revision share the folder.
+      const made = this.folders.create({ kind: 'online', songId, revisionId })
+      this.indexed().set(`${songId}/${revisionId}`, made)
+      folder = this.folders.path(made)
+    }
+    await mkdir(folder!, { recursive: true })
+    await writeFile(path.join(folder!, `${name}.json`), JSON.stringify(value))
   }
 }
 

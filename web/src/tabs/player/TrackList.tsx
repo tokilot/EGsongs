@@ -1,4 +1,5 @@
 import { Headphones, Pencil, Volume2, VolumeX } from 'lucide-react'
+import { sortByName } from '../../shared/alphabetical.ts'
 import { useLanguage } from '../../shared/ui/i18n.ts'
 import { programName } from './gmPrograms.ts'
 import { InstrumentIcon } from './InstrumentIcon.tsx'
@@ -34,7 +35,8 @@ export function TrackList() {
       </label>
 
       <ul className={styles.tracks}>
-        {state.tracks.map((track) => {
+        {/* By first letter (2026-11-10); the score keeps its own track order. */}
+        {sortByName(state.tracks, (track) => track.name).map((track) => {
           const selected = track.index === state.trackIndex
           const isSounding = sounding.has(track.index)
           return (

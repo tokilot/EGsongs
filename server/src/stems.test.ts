@@ -4,14 +4,14 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createApp } from './app.ts'
-import type { Device, DeviceInfo, SeparationMessage, SeparationRunner, StemItem } from './stems.ts'
+import { configInstruments, findSeparationModels, type Device, type DeviceInfo, type SeparationMessage, type SeparationRunner, type StemItem } from './stems.ts'
 
 /** Stands in for the Python script: writes two stems once it is told to finish. */
 function fakeSeparator(options: { problem?: string; fail?: string } = {}) {
   const runs: Array<{ device: Device; model: string; finish: () => Promise<void>; cancelled: boolean }> = []
   const runner: SeparationRunner = {
     check: () => options.problem ?? null,
-    modelFiles: () => ({ available: !options.problem, bytes: options.problem ? 0 : 1234 }),
+    models: () => [{ id: 'bs-roformer-sw', name: 'bs-roformer-sw', architecture: 'BS-RoFormer', stems: ['vocals', 'drums', 'bass', 'guitar', 'piano', 'other'], checkpoint: 'bs-roformer-sw/model.ckpt', config: 'bs-roformer-sw/config.yaml', license: 'unknown', source: '', available: true, bytes: 1234 }],
     devices: async () => ({ gpus: [{ name: 'Test GPU', memoryGb: 8 }], torch: '2.15.0', cuda: '13.2' }),
     run(_input, outputDir, model, device, onMessage: (message: SeparationMessage) => void) {
       let resolve!: () => void
@@ -191,47 +191,29 @@ describe('stems', () => {
     const unknown = await app.request('/api/stems?name=a.mp3&model=nope', { method: 'POST', body: new Uint8Array([1]) })
     expect(unknown.status).toBe(400)
   })
-})
 
-describe('starting the server', () => {
-  it('forgets the songs that are not favorites and every separation, keeping favorites and the tone library', async () => {
-    const fake = fakeSeparator()
-    const first = createApp({ dataDir, separator: fake.runner })
-    const kept = await first.library.addFile('kept.gp', new Uint8Array([1]))
-    const browsed = await first.library.addFile('browsed.gp', new Uint8Array([2]))
-    first.library.update(kept.id, { favorite: true, settings: { speed: 0.8 } })
-    first.library.touch(kept.id)
-    first.library.touch(browsed.id)
-    await first.app.request('/api/stems?name=a.mp3', { method: 'POST', body: new Uint8Array([1]) })
-    await new Promise((resolve) => setTimeout(resolve, 20))
-    await fake.runs[0].finish()
-    await new Promise((resolve) => setTimeout(resolve, 20))
-    await first.app.request('/api/tones', { method: 'PUT', body: JSON.stringify({ custom: [] }) })
-    expect(await first.stems.list()).toHaveLength(1)
-    first.library.close()
-
-    const next = createApp({ dataDir, separator: fake.runner, forgetHistory: true })
-    close = () => next.library.close()
-    expect(await next.ready).toEqual({ songs: 1, separations: 1 })
-    const songs = next.library.list()
-    expect(songs.map((song) => song.title)).toEqual(['kept'])
-    expect(songs[0]).toMatchObject({ favorite: true, lastOpenedAt: null, settings: { speed: 0.8 } })
-    // The favorite keeps its file (kept in user.db, whatever the source); nothing is left in data/tmps/.
-    expect(await next.library.readFile(songs[0])).toEqual(new Uint8Array([1]))
-    expect(existsSync(path.join(dataDir, 'tabs'))).toBe(false)
-    expect(existsSync(path.join(dataDir, 'tmps'))).toBe(false)
-    expect(await next.stems.list()).toEqual([])
-    expect(await (await next.app.request('/api/tones')).json()).toEqual({ library: { custom: [] } })
-  })
-
-  it('forgets nothing unless asked (as in the tests and scripts that make apps over and over)', async () => {
-    const first = createApp({ dataDir, separator: fakeSeparator().runner })
-    await first.library.addFile('browsed.gp', new Uint8Array([2]))
-    first.library.close()
-    const next = createApp({ dataDir, separator: fakeSeparator().runner })
-    close = () => next.library.close()
-    expect(await next.ready).toEqual({ songs: 0, separations: 0 })
-    expect(next.library.list()).toHaveLength(1)
+  it('finds the models in their folders (or lying loose), with the stems their config lists', () => {
+    const dir = path.join(dataDir, 'models')
+    const put = (file: string, content: string | number) => {
+      mkdirSync(path.dirname(path.join(dir, file)), { recursive: true })
+      writeFileSync(path.join(dir, file), typeof content === 'number' ? Buffer.alloc(content) : content)
+    }
+    put('BS-Roformer-SW/model.ckpt', 300)
+    put('BS-Roformer-SW/config.yaml', "audio:\n  chunk_size: 588800\ntraining:\n  batch_size: 1\n  instruments: ['bass', 'drums', 'other', 'vocals', 'guitar', 'piano']\n  target_instrument: null\n")
+    put('karaoke.ckpt', 100)
+    put('karaoke.yaml', 'training:\n  instruments:\n  - vocals\n  - "back vocals"\n  - other\n  lr: 1.0\n')
+    // No config, a config without instruments, and a config without its checkpoint: none of them is a model.
+    put('lonely/model.ckpt', 50)
+    put('odd/model.ckpt', 50)
+    put('odd/config.yaml', 'audio:\n  sample_rate: 44100\n')
+    put('orphan.yaml', "training:\n  instruments: ['vocals']\n")
+    const found = findSeparationModels(dir)
+    expect(found.map((model) => [model.id, model.checkpoint.replaceAll('\\', '/'), model.stems])).toEqual([
+      ['karaoke', 'karaoke.ckpt', ['vocals', 'other', 'back vocals']],
+      ['BS-Roformer-SW', 'BS-Roformer-SW/model.ckpt', ['vocals', 'drums', 'bass', 'guitar', 'piano', 'other']],
+    ])
+    expect(findSeparationModels(path.join(dir, 'nowhere'))).toEqual([])
+    expect(configInstruments('training:\n  instruments: [vocals, other]  # two\n')).toEqual(['vocals', 'other'])
   })
 })
 

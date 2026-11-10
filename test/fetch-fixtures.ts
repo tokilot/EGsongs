@@ -1,10 +1,10 @@
-// Downloads the 10 test songs from CLAUDE.md ("测试案例") into data/songs/, pinned to their revisions.
+// Downloads the 10 test songs (web/src/fixtures.ts) into test/songs/, pinned to their revisions.
 // Serial and rate limited; files that are already cached are not requested again.
 import path from 'node:path'
 import { SongsterrClient } from '../server/src/songs/client.ts'
 import { FIXTURES } from '../web/src/fixtures.ts'
 
-const client = new SongsterrClient({ cacheDir: path.resolve(import.meta.dirname, '../data/songs') })
+const client = new SongsterrClient({ cacheDir: path.resolve(import.meta.dirname, 'songs'), layout: 'by-id' })
 
 for (const fixture of FIXTURES) {
   const meta = await client.getMeta(fixture.songId, fixture.revisionId)

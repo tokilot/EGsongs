@@ -292,3 +292,29 @@ function keepFrets(staff: Json, oldCount: number, newCount: number): number {
   }
   return dropped
 }
+
+/**
+ * The score without one of its tracks (2026-11-10: "delete track" in the track editor, saved as the song's edited
+ * tab). A copy; the other tracks keep everything, their channels included. Null when it is the only track.
+ */
+export function withoutTrack(score: model.Score, index: number, settings: Settings): model.Score | null {
+  if (score.tracks.length <= 1 || !score.tracks[index]) return null
+  const object = JSON.parse(model.JsonConverter.scoreToJson(score)) as Json
+  object.tracks.splice(index, 1)
+  return model.JsonConverter.jsonToScore(JSON.stringify(object), settings)
+}
+
+/** Where a track's index goes when track `removed` is deleted: null for that track, one down for those after it. */
+export function indexAfterRemoval(index: number, removed: number): number | null {
+  return index === removed ? null : index > removed ? index - 1 : index
+}
+
+/** A per-track record (keyed by track index) after track `removed` is deleted: its entry gone, the later ones moved down. */
+export function keysAfterRemoval<T>(record: Record<string, T>, removed: number): Record<string, T> {
+  const result: Record<string, T> = {}
+  for (const [key, value] of Object.entries(record)) {
+    const index = indexAfterRemoval(Number(key), removed)
+    if (index !== null) result[String(index)] = value
+  }
+  return result
+}

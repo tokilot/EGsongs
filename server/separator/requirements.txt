@@ -6,6 +6,14 @@
 #
 # audio-separator goes in without its dependencies: it asks for diffq-fixed (only for Demucs models), which has no
 # wheel for Python 3.14 and does not build, and for beartype<0.19, which cannot read Python 3.14 annotations.
+#
+# transcribe.py needs MuScriptor (added 2026-11-10), which brings beat-this, torchaudio, mido, safetensors and others:
+#
+#   python -m pip install muscriptor==0.4.0
+#   python -m pip install --no-deps fastapi==0.135.1 uvicorn==0.41.0 click==8.3.1 httptools==0.7.1 idna==3.11
+#
+# The second line puts back what the first one upgraded in the shared environment; MuScriptor only needs the newer
+# ones for its own web server and command line, which transcribe.py does not use.
 torchvision==0.29.2
 audioop-lts==0.2.2
 audioread==3.1.0

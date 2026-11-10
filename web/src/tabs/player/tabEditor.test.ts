@@ -7,7 +7,7 @@ import { convertToScore } from '../songs/convert.ts'
 import { TabEditor } from './tabEditor.ts'
 import { applyTrackEdits } from './trackEdits.ts'
 
-const cacheDir = path.resolve(import.meta.dirname, '../../../../data/songs')
+const cacheDir = path.resolve(import.meta.dirname, '../../../../test/songs')
 const available = FIXTURES.every((fixture) => existsSync(path.join(cacheDir, String(fixture.songId), String(fixture.revisionId), 'meta.json')))
 
 function load(no: number): model.Score {

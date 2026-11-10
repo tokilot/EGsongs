@@ -1,11 +1,20 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 
-/** Sound fonts the player knows to prefer, best first; any other .sf2/.sf3 in the directory comes after them. */
-const PREFERRED = ['GeneralUser-GS.sf2', 'FluidR3Mono_GM.sf3']
+/**
+ * Sound fonts the player knows to prefer, best first; any other .sf2/.sf3 comes after them. Default.sf2 is the one
+ * that comes with the app (resources/soundfonts/: GeneralUser GS with three of Bread's distortion guitars added).
+ */
+const PREFERRED = ['Default.sf2', 'GeneralUser-GS.sf2', 'FluidR3Mono_GM.sf3']
 
 /** A set with presets for this many programs of bank 0 is taken for a General MIDI set. */
 const GM_PROGRAMS = 100
+
+/**
+ * The bank of the presets added to the main set from other files (Bread's guitars in Default.sf2, put there once
+ * by hand): clear of the banks General MIDI sets use and of the extra sets' below.
+ */
+export const ADDED_BANK = 1000
 
 /** The banks the extra sets are moved to, one each from here: clear of every bank a General MIDI set uses. */
 export const EXTRA_BANK = 1024
@@ -28,6 +37,8 @@ export interface SoundFont {
   bank?: number
   /** The presets of bank 0 that sound whole (not one side of a stereo pair); empty when the file cannot be read. */
   presets: SoundFontPreset[]
+  /** The main set: the presets added to it (in ADDED_BANK), offered per track like an extra set's. */
+  added?: { bank: number; presets: SoundFontPreset[] }
 }
 
 interface Chunk {
@@ -65,7 +76,9 @@ export function parseSoundFont(bytes: Buffer): Parsed | null {
   const presets: Parsed['presets'] = []
   // The last record of each list only marks its end.
   for (let at = phdr.offset; at + 2 * PHDR_SIZE <= phdr.offset + phdr.size; at += PHDR_SIZE) {
-    presets.push({ name: text(at, 20).replace(/\0.*$/s, '').trim(), program: bytes.readUInt16LE(at + 20), bank: bytes.readUInt16LE(at + 22) })
+    // UTF-8: plain ASCII names read the same, and the names given to the added presets are Chinese.
+    const name = bytes.toString('utf8', at, at + 20).replace(/\0.*$/s, '').trim()
+    presets.push({ name, program: bytes.readUInt16LE(at + 20), bank: bytes.readUInt16LE(at + 22) })
   }
   return { presets, phdr, shdr }
 }
@@ -101,48 +114,63 @@ export function prepareExtra(bytes: Buffer, parsed: Parsed, bank: number): Buffe
 }
 
 /**
- * Sample sets for the player, kept in data/soundfonts/ (put there by hand; their licences sit next to them). The
- * first General MIDI set is the main one, loaded at the start (without any, the small set alphaTab ships with).
- * The others are loaded by hand on the tone page, each in a bank of its own, and their presets picked per track
- * in "edit track".
+ * Sample sets for the player: the user's in data/soundfonts/ (put there by hand; their licences sit next to them)
+ * and the one that comes with the app in resources/soundfonts/ (2026-11-11). A name in the first folder hides the
+ * same name in a later one. The first General MIDI set is the main one, loaded at the start (without any, the small
+ * set alphaTab ships with). The others are loaded by hand on the tone page, each in a bank of its own, and their
+ * presets picked per track in "edit track".
  */
 export class SoundFonts {
-  readonly dir: string
+  readonly dirs: string[]
   private readonly parsed = new Map<string, { size: number; mtime: number; parsed: Parsed | null }>()
 
-  constructor(dir: string) {
-    this.dir = dir
+  /** `dirs`: where to look, the one that wins first. */
+  constructor(dirs: string | string[]) {
+    this.dirs = typeof dirs === 'string' ? [dirs] : dirs
+  }
+
+  /** Every .sf2/.sf3 by name, from the first folder that has it. */
+  private files(): Map<string, string> {
+    const found = new Map<string, string>()
+    for (const dir of this.dirs) {
+      if (!existsSync(dir)) continue
+      for (const name of readdirSync(dir)) if (/\.sf[23]$/i.test(name) && !found.has(name)) found.set(name, path.join(dir, name))
+    }
+    return found
   }
 
   /** The sound fonts there are, the one to use first. */
   list(): SoundFont[] {
-    if (!existsSync(this.dir)) return []
-    const names = readdirSync(this.dir).filter((name) => /\.sf[23]$/i.test(name))
+    const files = this.files()
+    const names = [...files.keys()]
     const rank = (name: string) => {
       const index = PREFERRED.indexOf(name)
       return index < 0 ? PREFERRED.length : index
     }
     names.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b))
-    const fonts: SoundFont[] = names.map((name) => ({ name, bytes: statSync(path.join(this.dir, name)).size, main: false, ...describe(this.read(name), name) }))
+    const fonts: SoundFont[] = names.map((name) => ({ name, bytes: statSync(files.get(name)!).size, main: false, ...describe(this.read(name), name) }))
     let extras = 0
     let main = false
     for (const font of fonts) {
-      if (!main && font.kind === 'gm') main = font.main = true
-      else font.bank = EXTRA_BANK + extras++
+      if (!main && font.kind === 'gm') {
+        main = font.main = true
+        const added = this.read(font.name)?.presets.filter((preset) => preset.bank === ADDED_BANK) ?? []
+        if (added.length > 0) font.added = { bank: ADDED_BANK, presets: added.map(({ program, name }) => ({ program, name })) }
+      } else font.bank = EXTRA_BANK + extras++
     }
     return fonts
   }
 
-  /** The file of one of them, or null (only names from the list: nothing outside the directory). */
+  /** The file of one of them, or null (only names from the list: nothing outside the folders). */
   file(name: string): string | null {
-    return this.list().some((font) => font.name === name) ? path.join(this.dir, name) : null
+    return this.files().get(name) ?? null
   }
 
   /** The bytes the player loads: the main set as it is, any other prepared (see prepareExtra). */
   bytes(name: string): { bytes: Buffer; bank: number | null } | null {
     const font = this.list().find((item) => item.name === name)
     if (!font) return null
-    const bytes = readFileSync(path.join(this.dir, name))
+    const bytes = readFileSync(this.file(name)!)
     const parsed = font.main ? null : this.read(name)
     if (!parsed || font.bank === undefined) return { bytes, bank: null }
     return { bytes: prepareExtra(bytes, parsed, font.bank), bank: font.bank }
@@ -150,7 +178,8 @@ export class SoundFonts {
 
   // Headers read once per version of the file.
   private read(name: string): Parsed | null {
-    const file = path.join(this.dir, name)
+    const file = this.file(name)
+    if (!file) return null
     const info = statSync(file)
     const known = this.parsed.get(name)
     if (known && known.size === info.size && known.mtime === info.mtimeMs) return known.parsed

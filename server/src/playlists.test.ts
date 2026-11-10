@@ -15,8 +15,8 @@ afterEach(() => {
   rmSync(dataDir, { recursive: true, force: true, maxRetries: 5 })
 })
 
-function setup(forgetHistory = false) {
-  const { app, library, ready } = createApp({ dataDir, forgetHistory })
+function setup(atStartup = false) {
+  const { app, library, ready } = createApp({ dataDir, atStartup })
   close = () => library.close()
   const call = async (method: string, url: string, body?: unknown) => {
     const response = await app.request(url, body === undefined ? { method } : { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })

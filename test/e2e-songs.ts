@@ -21,7 +21,7 @@ const shots = args.includes('--shots')
 const only = new Set(args.filter((arg) => /^\d+$/.test(arg)).map(Number))
 const shotDir = path.join(root, 'test', 'shots')
 
-const cache = path.join(root, 'data/songs')
+const cache = path.join(root, 'test/songs')
 if (!FIXTURES.every((fixture) => existsSync(path.join(cache, String(fixture.songId), String(fixture.revisionId), 'meta.json')))) {
   console.error('Songsterr fixtures are missing; run `npm run fixtures` first.')
   process.exit(1)
@@ -58,7 +58,7 @@ interface Summary {
 const problems: string[] = []
 
 async function main() {
-  start('node', ['src/index.ts'], path.join(root, 'server'), { TABS_PORT: String(API_PORT), TABS_DATA_DIR: dataDir, TABS_SOUNDFONTS: path.join(root, 'data/soundfonts') })
+  start('node', ['src/index.ts'], path.join(root, 'server'), { TABS_PORT: String(API_PORT), TABS_DATA_DIR: dataDir, TABS_SOUNDFONTS: path.join(root, 'data/soundfonts'), TABS_DEMO_SONGS: path.join(dataDir, 'no-demo') })
   start('npx', ['vite', '--port', String(WEB_PORT), '--strictPort'], path.join(root, 'web'), { TABS_PORT: String(API_PORT) })
   await waitFor(`http://127.0.0.1:${API_PORT}/api/songs`)
   await waitFor(BASE)

@@ -4,7 +4,7 @@ import { defineConfig } from 'vite'
 import { alphaTabPatches } from './alphatab-patches.ts'
 
 // TABS_PORT lets the end-to-end run use its own backend next to a running dev setup.
-const API = `http://127.0.0.1:${process.env.TABS_PORT ?? 5174}`
+const API = `http://127.0.0.1:${process.env.TABS_PORT ?? 7274}`
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -13,6 +13,7 @@ export default defineConfig({
   plugins: [alphaTabPatches(), react(), alphaTab()],
   worker: { plugins: () => [alphaTabPatches()] },
   optimizeDeps: { exclude: ['@coderline/alphatab'] },
-  server: { proxy: { '/api': API } },
+  // The page on 7273, the backend on 7274 (2026-11-10).
+  server: { port: 7273, proxy: { '/api': API } },
   preview: { proxy: { '/api': API } },
 })

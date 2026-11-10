@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createApp } from './app.ts'
-import { EXTRA_BANK, parseSoundFont, type SoundFont } from './soundFonts.ts'
+import { ADDED_BANK, EXTRA_BANK, parseSoundFont, type SoundFont } from './soundFonts.ts'
 
 let dataDir: string
 let close: (() => void) | null = null
@@ -17,7 +17,7 @@ afterEach(() => {
 })
 
 function setup() {
-  const { app, library } = createApp({ dataDir, soundFontDir: path.join(dataDir, 'soundfonts') })
+  const { app, library } = createApp({ dataDir, soundFontDir: path.join(dataDir, 'soundfonts'), resourcesDir: path.join(dataDir, 'resources') })
   close = () => library.close()
   return app
 }
@@ -66,6 +66,24 @@ describe('sound fonts', () => {
     expect(await (await setup().request('/api/soundfonts')).json()).toEqual([])
   })
 
+  it('reads the user\'s folder and the one that comes with the app, the app\'s Default.sf2 as the main set', async () => {
+    const own = path.join(dataDir, 'soundfonts')
+    const bundled = path.join(dataDir, 'resources', 'soundfonts')
+    mkdirSync(own, { recursive: true })
+    mkdirSync(bundled, { recursive: true })
+    writeFileSync(path.join(bundled, 'Default.sf2'), GM)
+    writeFileSync(path.join(own, 'Mine.sf2'), GM)
+    // The same name in the user's folder hides the app's.
+    writeFileSync(path.join(bundled, 'Mine.sf2'), 'not this one')
+    const app = setup()
+    const fonts = (await (await app.request('/api/soundfonts')).json()) as SoundFont[]
+    expect(fonts.map(({ name, main, bytes }) => ({ name, main, bytes }))).toEqual([
+      { name: 'Default.sf2', main: true, bytes: GM.length },
+      { name: 'Mine.sf2', main: false, bytes: GM.length },
+    ])
+    expect((await app.request('/api/soundfonts/Default.sf2')).status).toBe(200)
+  })
+
   it('lists the preferred ones first, then the rest, and leaves out other files', async () => {
     const dir = path.join(dataDir, 'soundfonts')
     mkdirSync(dir)
@@ -101,6 +119,21 @@ describe('sound fonts', () => {
       { program: 30, name: 'Whole' },
       { program: 3, name: 'ERS' },
     ])
+  })
+
+  it('lists the presets added to the main set in their bank, offered per track', async () => {
+    const dir = path.join(dataDir, 'soundfonts')
+    mkdirSync(dir)
+    const merged = soundFont(
+      [...Array.from({ length: 128 }, (_, program) => [0, program, `GM ${program}`] as [number, number, string]), [ADDED_BANK, 30, 'Bread Dist']],
+      [1],
+    )
+    writeFileSync(path.join(dir, 'GeneralUser-GS.sf2'), merged)
+    writeFileSync(path.join(dir, 'Other.sf2'), GM)
+    const fonts = (await (await setup().request('/api/soundfonts')).json()) as SoundFont[]
+    expect(fonts[0]).toMatchObject({ main: true, added: { bank: ADDED_BANK, presets: [{ program: 30, name: 'Bread Dist' }] } })
+    expect(fonts[0].presets).toHaveLength(128)
+    expect(fonts[1].added).toBeUndefined()
   })
 
   it('serves a set other than the main one moved to its bank, with every sample mono', async () => {

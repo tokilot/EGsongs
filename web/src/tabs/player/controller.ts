@@ -3,7 +3,7 @@ import * as alphaTab from '@coderline/alphatab'
 import { convertToScore, type SongInfo } from '../songs/convert.ts'
 import { BPM_MAX, BPM_MIN, DENOMINATORS, FreeMetronome, playCountIn, secondsPerBeat, type CountIn, type MetronomeSettings } from './clicks.ts'
 import { TabEditor, type EditorState, type Flag } from './tabEditor.ts'
-import { applyTrackEdits, trackSetup, type TrackEdit, type TrackEdits, type TrackSetup } from './trackEdits.ts'
+import { applyTrackEdits, indexAfterRemoval, keysAfterRemoval, trackSetup, withoutTrack, type TrackEdit, type TrackEdits, type TrackSetup } from './trackEdits.ts'
 import { AmpSim } from '../../audio/ampSim.ts'
 import { claimSound, releaseSound } from '../../audio/soundOwner.ts'
 import { request } from '../../shared/http.ts'
@@ -12,7 +12,7 @@ import type { Tone, ToneFamily } from '../../audio/tone.ts'
 import { DEFAULT_TONE_LIBRARY, findTone, type ToneLibrary } from '../../tones/library.ts'
 import { beatSolfege, type NoteNames } from './solfege.ts'
 import { transposeScore } from './transpose.ts'
-import { cleanTrackSwitches, switchesFromOld, trackForBar, withTrackSwitch, type TrackSwitches } from './trackSwitches.ts'
+import { cleanTrackSwitches, switchesAfterRemoval, switchesFromOld, trackForBar, withTrackSwitch, type TrackSwitches } from './trackSwitches.ts'
 import { cleanTrackSounds, trackPresets, type ExtraSoundFont, type SoundFontEntry, type TrackSound, type TrackSounds } from './trackSounds.ts'
 
 export type ScoreSource =
@@ -502,7 +502,14 @@ export class PlayerController {
         const fonts = await request<SoundFontEntry[]>('/api/soundfonts')
         const main = fonts.find((font) => font.main)
         if (main) chosen = `/api/soundfonts/${encodeURIComponent(main.name)}`
-        this.update({ soundFonts: fonts })
+        // The presets added to the main set are offered per track from the start, like a loaded extra set's.
+        const added: ExtraSoundFont[] = main?.added ? [{ name: main.name, bank: main.added.bank, kind: 'gm', presets: main.added.presets, main: true }] : []
+        this.update({ soundFonts: fonts, extraSoundFonts: [...added, ...this.snapshot.extraSoundFonts.filter((font) => !font.main)] })
+        // A song opened meanwhile picks its tracks' added presets at its program changes.
+        if (added.length > 0 && Object.keys(this.snapshot.trackSounds).length > 0) {
+          this.sendAmpRouting()
+          this.reloadMidi()
+        }
       } catch {
         // The server is not reachable: the bundled set still plays.
       }
@@ -513,7 +520,7 @@ export class PlayerController {
     const bytes = new Uint8Array(await response.arrayBuffer())
     if (this.api !== api) return
     api.loadSoundFont(bytes, false)
-    for (const font of this.snapshot.extraSoundFonts) {
+    for (const font of this.snapshot.extraSoundFonts.filter((item) => !item.main)) {
       const extra = await fetch(`/api/soundfonts/${encodeURIComponent(font.name)}`)
       if (!extra.ok || this.api !== api) continue
       const extraBytes = new Uint8Array(await extra.arrayBuffer())
@@ -549,11 +556,14 @@ export class PlayerController {
     }
   }
 
-  /** Plays a preset of a sample set on the instrument preview: the main set's by program, another's once loaded. */
-  previewPreset(name: string, program: number, tuning: number[]) {
+  /**
+   * Plays a preset of a sample set on the instrument preview: the main set's by program (`added`: one of the presets
+   * added to it), another's once loaded.
+   */
+  previewPreset(name: string, program: number, tuning: number[], added = false) {
     const font = this.snapshot.soundFonts.find((item) => item.name === name)
     if (!font) return
-    if (font.main) this.previewInstrument(program, tuning)
+    if (font.main && !added) this.previewInstrument(program, tuning)
     else this.previewInstrument(program, tuning, { font: name, program })
   }
 
@@ -1028,6 +1038,48 @@ export class PlayerController {
   /** How a track looks now (with edits, without transposition). */
   currentTrackSetup(index: number): TrackSetup | null {
     return this.baseScore ? trackSetup(this.baseScore, index) : null
+  }
+
+  /**
+   * The tab without one track, with the track edits baked in, as a Guitar Pro 7 file to save as the song's edited
+   * tab; null when the track cannot go (the only one, or while the tab is being edited).
+   */
+  trackRemovalFile(index: number): Uint8Array | null {
+    const api = this.api
+    const left = this.scoreWithoutTrack(index)
+    return api && left ? new alphaTab.exporter.Gp7Exporter().export(left, api.settings) : null
+  }
+
+  /**
+   * Deletes a track (once its removal is saved, see trackRemovalFile): the tab without it becomes the song's tab,
+   * the track edits are baked in (and cleared), and what is kept per track (tones, sounds, switches, the track picked,
+   * the mixer) moves down past it.
+   */
+  removeTrack(index: number) {
+    const left = this.scoreWithoutTrack(index)
+    if (!left) return
+    const count = left.tracks.length
+    // The track that takes the deleted one's place (the one before it when it was the last).
+    const moved = (track: number) => indexAfterRemoval(track, index) ?? Math.min(index, count - 1)
+    // Solo, mute and volume stay with the synthesizer's channels: the deleted track's must not outlive it.
+    this.resetMixer()
+    this.originalScore = left
+    this.update({
+      tracks: this.snapshot.tracks.filter((info) => info.index !== index).map((info) => ({ ...info, index: moved(info.index) })),
+      trackIndex: moved(this.snapshot.trackIndex),
+      baseTrack: moved(this.snapshot.baseTrack),
+      trackSwitches: switchesAfterRemoval(this.snapshot.trackSwitches, index),
+      trackTones: keysAfterRemoval(this.snapshot.trackTones, index),
+      trackSounds: keysAfterRemoval(this.snapshot.trackSounds, index),
+      barCount: left.masterBars.length,
+    })
+    this.rerender(this.snapshot.transpose, {})
+  }
+
+  private scoreWithoutTrack(index: number): alphaTab.model.Score | null {
+    const api = this.api
+    if (!api || !this.baseScore || this.snapshot.status !== 'ready' || this.snapshot.editing) return null
+    return withoutTrack(this.baseScore, index, api.settings)
   }
 
   /**

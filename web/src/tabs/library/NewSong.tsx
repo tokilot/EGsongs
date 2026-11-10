@@ -3,6 +3,7 @@ import * as api from '../api.ts'
 import type { Song } from '../api.ts'
 import { useLanguage } from '../../shared/ui/i18n.ts'
 import { BLANK_DEFAULTS, BLANK_INSTRUMENTS, BLANK_TIME_SIGNATURES, blankFileName, blankTabFile, type BlankInstrument, type BlankTab } from './blankScore.ts'
+import { MIDI_EXTENSIONS, midiTabFile } from './midiScore.ts'
 import styles from './panels.module.css'
 
 /** "New": import a tab file, or start a blank tab to write in the tab editor. */
@@ -32,6 +33,14 @@ export function NewSong({ onDone }: { onDone: (songId: number) => void }) {
     return api.updateSong(song.id, { title: tab.title, artist: tab.artist })
   }
 
+  // A MIDI file has no tab in it: it is written out here (midiScore.ts) and goes in as a Guitar Pro file.
+  const importMidi = async (file: File) => {
+    const title = file.name.replace(MIDI_EXTENSIONS, '').trim() || t('未命名曲谱')
+    const tab = midiTabFile(new Uint8Array(await file.arrayBuffer()), title)
+    const song = await api.uploadSong(new File([tab as BlobPart], blankFileName(title)))
+    return api.updateSong(song.id, { title })
+  }
+
   const set = (change: Partial<BlankTab>) => setBlank({ ...blank, ...change })
   const clamp = (value: number, min: number, max: number, fallback: number) => (Number.isFinite(value) ? Math.min(Math.max(Math.round(value), min), max) : fallback)
 
@@ -41,14 +50,14 @@ export function NewSong({ onDone }: { onDone: (songId: number) => void }) {
       <input
         type="file"
         aria-label={t('曲谱文件')}
-        accept=".gp,.gp3,.gp4,.gp5,.gpx,.xml,.musicxml,.mxl,.atex,.alphatex"
+        accept=".gp,.gp3,.gp4,.gp5,.gpx,.xml,.musicxml,.mxl,.atex,.alphatex,.mid,.midi"
         disabled={busy}
         onChange={(event) => {
           const file = event.target.files?.[0]
-          if (file) void run(() => api.uploadSong(file))
+          if (file) void run(() => (MIDI_EXTENSIONS.test(file.name) ? importMidi(file) : api.uploadSong(file)))
         }}
       />
-      <p className={styles.muted}>{t('支持 Guitar Pro、MusicXML 和 alphaTex。')}</p>
+      <p className={styles.muted}>{t('支持 Guitar Pro、MusicXML、alphaTex 和 MIDI。')}</p>
 
       <h2>{t('新建空白谱')}</h2>
       <form

@@ -14,7 +14,7 @@
 .content {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 18px;
   width: min(1000px, calc(100% - 32px));
   margin: 24px auto 40px;
 }
@@ -24,10 +24,22 @@
   font-size: 22px;
 }
 
-/* The device and the audio side by side, the audio wider; the stems come under both. */
+/* One tool (stem separation, audio to MIDI): its title, its model and audio side by side, then the job looked at. */
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.blockHeader h2 {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+
+/* The model and the audio side by side, the audio wider; the job looked at comes under both. */
 .top {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
   gap: 14px;
   align-items: stretch;
 }
@@ -64,6 +76,34 @@
   color: var(--danger);
 }
 
+/* A number inside the model's facts (the steady tempo); greyed while a beat tracker sets it. */
+.inlineNumber {
+  width: 72px;
+  height: 26px;
+  padding: 0 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.inlineNumber:disabled {
+  opacity: 0.5;
+}
+
+/* A choice inside the model's facts (which instruments to hear). */
+.inlineSelect {
+  max-width: 100%;
+  height: 26px;
+  padding: 0 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+}
+
 /* The recording picked, before it is separated. */
 .staged {
   display: flex;
@@ -97,10 +137,10 @@
   color: var(--danger);
 }
 
-/* The graphics card above the CPU; the one in use is outlined. */
+/* The graphics card and the CPU side by side, above both tools; the one in use is outlined. */
 .devices {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 8px;
 }
 
@@ -403,4 +443,33 @@
 .download:hover {
   background: var(--surface-raised);
   color: var(--accent);
+}
+
+/* A finished transcription: what is in the MIDI, and its download. */
+.midiResult {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border-radius: 8px;
+}
+
+.midiFacts {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.midiFacts p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.midiResult a {
+  flex: none;
+  text-decoration: none;
 }
