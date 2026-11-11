@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import type { SongsterrRevision, SongsterrSearchHit } from '../../../contracts/library.ts'
 import { SongFolders } from './songFolders.ts'
 
 // Everything we know about the undocumented Songsterr endpoints lives in this file.
@@ -34,19 +35,8 @@ export interface SongsterrMeta {
   tracks: SongsterrTrackInfo[]
 }
 
-export interface SongsterrSearchHit {
-  songId: number
-  title: string
-  artist: string
-  trackCount: number
-}
-
-export interface SongsterrRevision {
-  revisionId: number
-  createdAt: string
-  author: string
-  description: string
-}
+/** Search hits and revisions as the page sees them, defined with it in contracts/library.ts. */
+export type { SongsterrRevision, SongsterrSearchHit } from '../../../contracts/library.ts'
 
 export class SongsterrError extends Error {
   readonly status: number

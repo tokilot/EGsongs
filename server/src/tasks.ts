@@ -7,27 +7,10 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { createInterface } from 'node:readline'
 
-export type Device = 'cuda' | 'cpu'
+import type { Device, Task, TaskBase } from '../../contracts/tasks.ts'
 
-/** What every job has, from the moment it is queued. */
-export interface TaskBase {
-  id: string
-  /** The recording's file name without its extension. */
-  name: string
-  sourceName: string
-  createdAt: string
-  device: Device | null
-}
-
-export interface TaskState {
-  status: 'queued' | 'running' | 'failed' | 'done'
-  /** 0–1. */
-  progress: number
-  error: string | null
-}
-
-/** A job as the page lists it; `Extra` is what one kind of job adds (its model, its results). */
-export type Task<Extra> = TaskBase & Extra & TaskState
+/** The jobs as the page sees them, defined with it in contracts/tasks.ts. */
+export type { Device, Task, TaskBase, TaskState } from '../../contracts/tasks.ts'
 
 /** One run of the script. `done` resolves with what the job found, which is kept with it. */
 export interface TaskRun<Extra> {

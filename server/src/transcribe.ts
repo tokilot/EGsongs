@@ -1,25 +1,19 @@
 // "Audio to MIDI": recordings transcribed by MuScriptor (Kyutai x Mirelo), queued with the separations.
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
-import { runScript, TaskError, TaskStore, type Device, type Exclusive, type Task } from './tasks.ts'
+import type { BeatModel, InstrumentChoice, MidiResult, TranscriptionItem, TranscriptionModel, TranscriptionModelInfo, TranscriptionResult } from '../../contracts/transcriptions.ts'
+import { runScript, TaskError, TaskStore, type Device, type Exclusive } from './tasks.ts'
 
-/** A transcription model found in the model directory (data/models/transcriber/), and what the page shows of it. */
-export interface TranscriptionModel {
-  /** Its folder's name (or its file's, without the extension). */
-  id: string
-  name: string
-  /** Its weights, relative to the model directory, and their config.json if there is one (MuScriptor knows its
-   * published models without it). */
-  weights: string
-  config: string | null
-  /** Millions of parameters, from the file's size (float32 weights). */
-  parameters: number
-  /** 'unknown' when it is not a MuScriptor model; the page explains it. */
-  license: string
-  /** The licence forbids commercial use: personal use only. */
-  nonCommercial: boolean
-  source: string
-}
+/** The models, beat trackers and transcriptions as the page sees them, defined with it in contracts/transcriptions.ts. */
+export type {
+  BeatModel,
+  InstrumentChoice,
+  MidiResult,
+  TranscriptionItem,
+  TranscriptionModel,
+  TranscriptionModelInfo,
+  TranscriptionResult,
+} from '../../contracts/transcriptions.ts'
 
 /** The folder of the beat tracker's checkpoint, which is not a transcription model. */
 const BEAT_FOLDER = 'beat_this'
@@ -70,19 +64,6 @@ function describe(dir: string, id: string, weights: string, config: string | nul
   }
 }
 
-/**
- * A beat tracker's checkpoint (beat_this, MIT): finds the beats and bar lines the MIDI is written on. Optional
- * (2026-11-11): without one, or with none picked, the MIDI is written at a steady tempo given on the page.
- */
-export interface BeatModel {
-  /** `beat_this/<file name without .ckpt>`. */
-  id: string
-  name: string
-  /** Relative to the model directory. */
-  file: string
-  bytes: number
-}
-
 /** The beat_this checkpoints in `dir`/beat_this/ (final0.ckpt and the like), by name. */
 export function findBeatModels(dir: string): BeatModel[] {
   const folder = path.join(dir, BEAT_FOLDER)
@@ -102,46 +83,12 @@ export const DEFAULT_BPM = 120
 export const MIN_BPM = 20
 export const MAX_BPM = 300
 
-/** Which instruments the model may hear: all of them, or only guitars and/or basses (for a separated stem). */
-export type InstrumentChoice = 'auto' | 'guitar' | 'bass' | 'guitar-bass'
-
 /** MuScriptor's instrument groups for each choice (`muscriptor list-instruments`). */
 export const INSTRUMENT_GROUPS: Record<InstrumentChoice, string[]> = {
   auto: [],
   guitar: ['acoustic_guitar', 'clean_electric_guitar', 'distorted_electric_guitar'],
   bass: ['acoustic_bass', 'electric_bass'],
   'guitar-bass': ['acoustic_guitar', 'clean_electric_guitar', 'distorted_electric_guitar', 'acoustic_bass', 'electric_bass'],
-}
-
-/** The MIDI a transcription wrote, and what is in it. */
-export interface MidiResult {
-  file: string
-  notes: number
-  /** MuScriptor's instrument groups heard, the most notes first. */
-  parts: string[]
-  /** The tempo the MIDI is written in; null when no beat was found. */
-  bpm: number | null
-  /** The tempo and bar lines came from the beat tracker; false: the steady tempo asked for. */
-  detected: boolean
-  seconds: number
-}
-
-/** What a transcription adds to a job: its model, choice of instruments and of beat tracker, and (once done) the MIDI. */
-export interface TranscriptionResult {
-  model: string
-  instruments: InstrumentChoice
-  /** The beat tracker picked, or null for the steady `bpm`. */
-  beat: string | null
-  bpm: number
-  midi: MidiResult | null
-}
-
-export type TranscriptionItem = Task<TranscriptionResult>
-
-/** A model as the page lists it: whether its files are there, and how big they are. */
-export interface TranscriptionModelInfo extends TranscriptionModel {
-  available: boolean
-  bytes: number
 }
 
 export type TranscriptionMessage = { device: Device } | { progress: number } | { midi: MidiResult }

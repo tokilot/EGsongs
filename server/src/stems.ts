@@ -2,30 +2,15 @@ import { spawn } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { Exclusive, runScript, TaskError, TaskStore, type Device, type Task } from './tasks.ts'
+import type { DeviceInfo, ModelInfo, SeparationModel, Stem, StemResult, StemItem } from '../../contracts/stems.ts'
+import { Exclusive, runScript, TaskError, TaskStore, type Device } from './tasks.ts'
 
 export type { Device } from './tasks.ts'
 /** Errors the routes answer with their status (an unknown model, a missing model file). */
 export { TaskError as StemError } from './tasks.ts'
 
-/** A stem's name as its model calls it (`training.instruments` in the model's YAML), e.g. 'guitar'. */
-export type StemName = string
-
-/** A separation model found in the model directory (data/models/separator/), and what the page shows of it. */
-export interface SeparationModel {
-  /** Its folder's name (or its file's, without the extension). */
-  id: string
-  name: string
-  architecture: string
-  /** The stems it gives (its YAML's `training.instruments`), in the order the page lists them. */
-  stems: StemName[]
-  /** Its checkpoint and config, relative to the model directory. */
-  checkpoint: string
-  config: string
-  /** 'unknown' when the weights' licence is not stated; the page leaves it out. */
-  license: string
-  source: string
-}
+/** The models and separations as the page sees them, defined with it in contracts/stems.ts. */
+export type { DeviceInfo, ModelInfo, SeparationModel, Stem, StemName, StemResult, StemItem } from '../../contracts/stems.ts'
 
 /** The usual stems first, in this order; any other stem a model has comes after them, in its config's order. */
 const STEM_ORDER = ['vocals', 'drums', 'bass', 'guitar', 'piano', 'other']
@@ -85,40 +70,6 @@ export function configInstruments(yaml: string): string[] {
 function orderStems(stems: string[]): string[] {
   const known = STEM_ORDER.filter((name) => stems.includes(name))
   return [...known, ...stems.filter((name) => !STEM_ORDER.includes(name))]
-}
-
-/** A model as the page lists it: whether its files are there, and how big they are. */
-export interface ModelInfo extends SeparationModel {
-  available: boolean
-  bytes: number
-}
-
-export interface Stem {
-  name: StemName
-  file: string
-  /** Loudness of the whole stem; a stem the model found (almost) nothing for is far below the others. */
-  rmsDb: number
-}
-
-/** What a separation adds to a job: its model, and (once done) the stems, as FLAC files next to stems.json. */
-export interface StemResult {
-  /** The model's id; separations made before models could be picked have none (they used the first). */
-  model?: string
-  stems: Stem[]
-}
-
-/** A separation as the page lists it: finished, or still on its way (or failed). */
-export type StemItem = Task<StemResult>
-
-/** The computer the jobs run on, for the page to show and to pick from (the stems and the MIDI share it). */
-export interface DeviceInfo {
-  cpu: { name: string; threads: number }
-  memoryGb: number
-  gpus: Array<{ name: string; memoryGb: number }>
-  torch: string | null
-  cuda: string | null
-  /** Why nothing can run at all (no Python, PyTorch does not start), or null. */
-  problem: string | null
 }
 
 /** One message printed by the separation script, see server/separator/separate.py. */

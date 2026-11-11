@@ -4,30 +4,10 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { CachedRevision } from '../songs/client.ts'
 import type { SongFolders } from '../songs/songFolders.ts'
 
-export type SongSource = 'songsterr' | 'file'
+import type { Song, SongSettings, SongSource } from '../../../contracts/library.ts'
 
-/** Per-song practice settings; the web app owns the shape, the server only stores it. */
-export type SongSettings = Record<string, unknown>
-
-export interface Song {
-  id: number
-  source: SongSource
-  title: string
-  artist: string
-  sourceUrl: string | null
-  songsterrId: number | null
-  revisionId: number | null
-  revisionDate: string | null
-  fileName: string | null
-  trackCount: number
-  defaultTrack: number
-  favorite: boolean
-  /** The tab has been changed in the editor; the edited copy is loaded instead of the source. */
-  edited: boolean
-  settings: SongSettings
-  createdAt: string
-  lastOpenedAt: string | null
-}
+/** The songs as the page sees them, defined with it in contracts/library.ts. */
+export type { Song, SongSettings, SongSource } from '../../../contracts/library.ts'
 
 export interface SongsterrSongInput {
   songsterrId: number

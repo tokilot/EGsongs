@@ -2,6 +2,7 @@
 // besides the main General MIDI one (server/src/soundFonts.ts), say one guitar sampled several ways. They are loaded
 // by hand on the tone page, each in a bank of its own; a track given one of their presets plays it through the
 // routing table (audio/ampRouting.ts), the tab itself is not changed.
+import type { SoundFont } from '../../../../contracts/soundFonts.ts'
 import type { TrackPresets } from '../../audio/ampRouting.ts'
 import { INSTRUMENT_CATEGORIES, instrumentPlace } from './trackEdits.ts'
 
@@ -14,19 +15,8 @@ export interface TrackSound {
 /** Track index -> its preset. */
 export type TrackSounds = Record<string, TrackSound>
 
-/** A sample set as the server lists it (server/src/soundFonts.ts). */
-export interface SoundFontEntry {
-  name: string
-  bytes: number
-  kind: 'gm' | 'extra'
-  /** Loaded at the start; the tabs' instruments play from it. */
-  main: boolean
-  /** Every other set: the bank it is loaded in. */
-  bank?: number
-  presets: Array<{ program: number; name: string }>
-  /** The main set: presets added to it from other files, in a bank of their own (Bread's guitars in Default.sf2, see server/src/soundFonts.ts ADDED_BANK). */
-  added?: { bank: number; presets: Array<{ program: number; name: string }> }
-}
+/** A sample set as the server lists it (contracts/soundFonts.ts). */
+export type SoundFontEntry = SoundFont
 
 /** A sample set loaded after the main one, or (`main`) the presets added to the main set. */
 export interface ExtraSoundFont {

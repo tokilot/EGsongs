@@ -1,47 +1,17 @@
-// The stems' calls to the local server (server/src/routes/stems.ts).
+// The stems' calls to the local server (server/src/routes/stems.ts, transcriptions.ts). What they send and get back
+// is defined once, with the server, in contracts/; the names the page uses for them are kept here.
+import type { Device } from '../../../contracts/tasks.ts'
+import type { DeviceInfo, ModelInfo, StemItem, StemName } from '../../../contracts/stems.ts'
+import type { BeatModel, InstrumentChoice, MidiResult, TranscriptionItem, TranscriptionModelInfo } from '../../../contracts/transcriptions.ts'
 import { request } from '../shared/http.ts'
 
-/** Recordings split into stems, on their own (server/src/stems.ts). A stem's name is its model's, e.g. 'guitar'. */
-export type StemName = string
-export type StemDevice = 'cuda' | 'cpu'
-
-export interface StemItem {
-  id: string
-  name: string
-  sourceName: string
-  createdAt: string
-  device: StemDevice | null
-  model?: string
-  stems: Array<{ name: StemName; file: string; rmsDb: number }>
-  status: 'queued' | 'running' | 'failed' | 'done'
-  progress: number
-  error: string | null
-}
-
-export interface StemDevices {
-  cpu: { name: string; threads: number }
-  memoryGb: number
-  gpus: Array<{ name: string; memoryGb: number }>
-  torch: string | null
-  cuda: string | null
-  /** Why separating cannot work here at all, or null. */
-  problem: string | null
-}
-
-/** A separation model (server/src/stems.ts MODELS), with whether its files are there. */
-export interface StemModel {
-  id: string
-  name: string
-  architecture: string
-  stems: StemName[]
-  checkpoint: string
-  config: string
-  /** 'unknown' when the weights' licence is not stated. */
-  license: string
-  source: string
-  available: boolean
-  bytes: number
-}
+export type { BeatModel, InstrumentChoice, MidiResult, StemItem, StemName, TranscriptionItem }
+export type StemDevice = Device
+export type StemDevices = DeviceInfo
+/** A separation model found in data/models/separator/, with whether its files are there. */
+export type StemModel = ModelInfo
+/** A model found in data/models/transcriber/, with whether its files are there. */
+export type TranscriptionModel = TranscriptionModelInfo
 
 export function getStemModels(): Promise<StemModel[]> {
   return request('/api/stems/models')
@@ -69,62 +39,8 @@ export function stemUrl(id: string, name: StemName): string {
   return `/api/stems/${id}/${encodeURIComponent(name)}`
 }
 
-/** Recordings transcribed to MIDI by MuScriptor (server/src/transcribe.ts). */
-export type InstrumentChoice = 'auto' | 'guitar' | 'bass' | 'guitar-bass'
-
-export interface MidiResult {
-  file: string
-  notes: number
-  /** MuScriptor's instrument groups heard (e.g. 'distorted_electric_guitar'), the most notes first. */
-  parts: string[]
-  /** The tempo the MIDI is written in; null when no beat was found. */
-  bpm: number | null
-  /** The tempo and bar lines came from the beat tracker; false: the steady tempo asked for. Missing before 2026-11-11. */
-  detected?: boolean
-  seconds: number
-}
-
-export interface TranscriptionItem {
-  id: string
-  name: string
-  sourceName: string
-  createdAt: string
-  device: StemDevice | null
-  model: string
-  instruments: InstrumentChoice
-  /** The beat tracker picked, or null for the steady `bpm`. */
-  beat?: string | null
-  bpm?: number
-  midi: MidiResult | null
-  status: 'queued' | 'running' | 'failed' | 'done'
-  progress: number
-  error: string | null
-}
-
-/** A model found in data/models/transcriber/ (server/src/transcribe.ts findTranscriptionModels). */
-export interface TranscriptionModel {
-  id: string
-  name: string
-  /** Millions of parameters, estimated from the file's size. */
-  parameters: number
-  /** 'unknown' when it is not a MuScriptor model. */
-  license: string
-  /** The licence forbids commercial use. */
-  nonCommercial: boolean
-  source: string
-  available: boolean
-  bytes: number
-}
-
 export function getTranscriptionModels(): Promise<TranscriptionModel[]> {
   return request('/api/transcriptions/models')
-}
-
-/** A beat tracker checkpoint in data/models/transcriber/beat_this/ (optional). */
-export interface BeatModel {
-  id: string
-  name: string
-  bytes: number
 }
 
 export function getBeatModels(): Promise<BeatModel[]> {

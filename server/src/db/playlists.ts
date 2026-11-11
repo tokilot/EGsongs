@@ -1,12 +1,8 @@
 import type { DatabaseSync } from 'node:sqlite'
+import type { Playlist } from '../../../contracts/library.ts'
 
-/** A playlist: a named group of favourite songs, in the order they are played. */
-export interface Playlist {
-  id: number
-  name: string
-  /** The songs, in playing order. */
-  songIds: number[]
-}
+/** A playlist as the page sees it, defined with it in contracts/library.ts. */
+export type { Playlist } from '../../../contracts/library.ts'
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS playlists (

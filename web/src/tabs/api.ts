@@ -1,4 +1,5 @@
 // The tabs' calls to the local server: the library, local files and online tabs (server/src/routes/library.ts, songs.ts).
+import type { Playlist, Song as LibrarySong, SongsterrRevision, SongsterrSearchHit } from '../../../contracts/library.ts'
 import { json, request } from '../shared/http.ts'
 import { translate } from '../shared/ui/i18n.ts'
 import type { TrackEdits } from './player/trackEdits.ts'
@@ -27,39 +28,11 @@ export interface PracticeSettings {
   trackSwitches?: Record<string, number>
 }
 
-export interface Song {
-  id: number
-  source: 'songsterr' | 'file'
-  title: string
-  artist: string
-  sourceUrl: string | null
-  songsterrId: number | null
-  revisionId: number | null
-  revisionDate: string | null
-  fileName: string | null
-  trackCount: number
-  defaultTrack: number
-  favorite: boolean
-  /** Changed in the tab editor: open the edited copy instead of the source. */
-  edited: boolean
-  settings: PracticeSettings
-  createdAt: string
-  lastOpenedAt: string | null
-}
+/** A song of the library (contracts/library.ts), its practice settings read as the page keeps them. */
+export type Song = LibrarySong<PracticeSettings>
 
-export interface SongsterrHit {
-  songId: number
-  title: string
-  artist: string
-  trackCount: number
-}
-
-export interface Revision {
-  revisionId: number
-  createdAt: string
-  author: string
-  description: string
-}
+export type SongsterrHit = SongsterrSearchHit
+export type Revision = SongsterrRevision
 
 export function listSongs(options: { query?: string; favorite?: boolean } = {}): Promise<Song[]> {
   const params = new URLSearchParams()
@@ -89,12 +62,8 @@ export function deleteSong(id: number): Promise<{ ok: boolean }> {
   return request(`/api/songs/${id}`, { method: 'DELETE' })
 }
 
-/** A playlist of favourite songs, in playing order (server/src/db/playlists.ts). */
-export interface Playlist {
-  id: number
-  name: string
-  songIds: number[]
-}
+/** A playlist of favourite songs, in playing order (contracts/library.ts). */
+export type { Playlist }
 
 export function listPlaylists(): Promise<Playlist[]> {
   return request('/api/playlists')

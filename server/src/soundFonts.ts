@@ -1,5 +1,9 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
+import type { SoundFont, SoundFontPreset } from '../../contracts/soundFonts.ts'
+
+/** The sample sets as the page sees them, defined with it in contracts/soundFonts.ts. */
+export type { SoundFont, SoundFontPreset } from '../../contracts/soundFonts.ts'
 
 /**
  * Sound fonts the player knows to prefer, best first; any other .sf2/.sf3 comes after them. Default.sf2 is the one
@@ -20,26 +24,6 @@ export const ADDED_BANK = 1000
 export const EXTRA_BANK = 1024
 /** Where an extra set's other banks (variations, drum kits) are put out of the way: no track asks for it. */
 const UNUSED_BANK = 2047
-
-export interface SoundFontPreset {
-  program: number
-  name: string
-}
-
-export interface SoundFont {
-  name: string
-  bytes: number
-  /** A full General MIDI set, or a set of a few instruments. */
-  kind: 'gm' | 'extra'
-  /** The set the player loads at the start and plays the tabs' instruments with: the first General MIDI set. */
-  main: boolean
-  /** Every other set: the bank its presets are served in (it is loaded by hand, its presets picked per track). */
-  bank?: number
-  /** The presets of bank 0 that sound whole (not one side of a stereo pair); empty when the file cannot be read. */
-  presets: SoundFontPreset[]
-  /** The main set: the presets added to it (in ADDED_BANK), offered per track like an extra set's. */
-  added?: { bank: number; presets: SoundFontPreset[] }
-}
 
 interface Chunk {
   offset: number
