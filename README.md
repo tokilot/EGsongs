@@ -1,6 +1,8 @@
 <h1 align="center">Electric Guitar Tabs</h1>
 
-<p align="center">吉他谱练习工具：在线看谱、练习模式，效果器音色调教，分离音轨、MIDI转谱。</p>
+<p align="center">吉他练习工具：在线看谱、练习模式，效果器音色调教，分离音轨、MIDI转谱。</p>
+
+<p align="center">中文 | <a href="README.en.md">English</a></p>
 
 Electric Guitar Tabs 是一个在浏览器里渲染使用的吉他谱练习项目，曲谱、练习设置和音色都存在本机，后端只监听 `127.0.0.1`。界面支持中文和英文两种。
 
@@ -36,14 +38,13 @@ npm ci
 npm run dev
 ```
 
-打开 [127.0.0.1:7273](http://127.0.0.1:7273)。后端在 7274 端口，开发时前端会把 `/api` 转给它。
+打开 [127.0.0.1:7273](http://127.0.0.1:7273)。网页和后端接口都在这一个端口上（`server/src/dev.ts`：网页由 Vite 提供，带热更新，`/api` 交给后端）。
 
-第一次运行会建好 `data/` 文件夹和里面的数据库，以及要自己往里放东西的 `soundfonts/`、`models/` 子文件夹。曲库里会先放好一首示例谱「赤より紅い夢」（`resources/songs/demo/`），不需要可以直接删掉，之后不会再自动加回来。所有个人数据（曲子、练习设置、谱文件、播放列表、音色）都在 `data/user.db` 里，只需备份这一个文件夹。收藏的曲子连谱子一起存在 `user.db` 里；没收藏的曲子，谱子放在 `data/songs/` 的编号文件夹里，重启后照样保留，
-只有这些文件被删掉了，那首曲子才会从曲库里去掉。
+第一次运行会建好 `data/` 文件夹和里面的数据库，以及要自己往里放东西的 `soundfonts/`、`models/` 子文件夹。曲库里会先放好一首示例谱「赤より紅い夢」（`resources/songs/demo/`），不需要可以直接删掉，之后不会再自动加回来。所有个人数据（曲子、练习设置、谱文件、播放列表、音色）都在 `data/user.db` 里，只需备份这一个文件夹。收藏的曲子连谱子一起存在 `user.db` 里；没收藏的曲子，谱子放在 `data/songs/` 的编号文件夹里，重启后照样保留，只有这些文件被删掉了，那首曲子才会从曲库里去掉。
 
 ### 乐器采样库
 
-把 `.sf2` / `.sf3` 采样音色文件放进 `data/soundfonts/`，推荐 [Polyphone] (https://www.polyphone.io) 下载。
+把 `.sf2` / `.sf3` 采样音色文件放进 `data/soundfonts/`，推荐 [Polyphone](https://www.polyphone.io) 下载。
 仓库里附带一套 GeneralUser GS（`resources/soundfonts/Default.sf2`，并入了 Bread 的三个失真吉他预设），打开页面时自动加载；
 其他音色库需要在「音色」页里手动加载。
 
@@ -57,7 +58,7 @@ npm run dev
 3. 「处理设备」可以选显卡或 CPU，有 NVIDIA 显卡时默认用显卡。
 4. 模型文件：
    - 音轨分离：每个模型一个文件夹，放进 `data/models/separator/`，里面是 `model.ckpt` 和 `config.yaml`，
-     如 `data/models/separator/BS-Roformer-SW/`，推荐 [BS-RoFormer SW](https://huggingface.co/)。
+     如 `data/models/separator/BS-Roformer-SW/`，推荐 [BS-RoFormer SW](https://huggingface.co/Noshibest/BS-Roformer-SW)。
    - 音频转 MIDI：每个模型一个文件夹，放进 `data/models/transcriber/`，里面是 `model.safetensors`（和 `config.json`），
      如 `data/models/transcriber/muscriptor-medium/`，推荐 [MuScriptor](https://github.com/muscriptor/muscriptor)。
    - 节拍检测（可选）：[beat_this](https://github.com/CPJKU/beat_this) 的 `final0.ckpt`，放在 `data/models/transcriber/beat_this/`。
@@ -71,7 +72,8 @@ npm run dev
 
 | 变量 | 作用 | 默认 |
 | --- | --- | --- |
-| `TABS_PORT` | 后端端口 | `7274` |
+| `TABS_DEV_PORT` | `npm run dev` 的端口（网页和接口） | `7273` |
+| `TABS_PORT` | 只启动后端（`npm start -w server`）时的端口 | `7274` |
 | `TABS_DATA_DIR` | 数据目录 | 仓库里的 `data/` |
 | `TABS_PYTHON` | 转谱用的 Python | 仓库上一级的 `.venv` |
 | `TABS_SEPARATOR_MODELS` | 音轨分离模型的目录 | `data/models/separator/` |
@@ -96,7 +98,7 @@ npm run build
 请自行下载并遵守第三方组件和数据的许可：
 
 - alphaTab：MPL-2.0。
-- 乐器采样库：附带的 `Default.sf2` 是 GeneralUser GS（按它的许可）并入了 Bread 的预设（按其原作者的许可）；自己下载的按各自的许可。
+- 乐器采样库：附带的 `Default.sf2` 包含基本的乐器采样，可自由使用；从第三方下载的按其许可。
 - 分离音轨模型：下载的第三方模型许可。
 - 转 MIDI 模型：下载的第三方模型许可。
-- 节拍检测模型：beat_this 的代码和权重：MIT。
+- 节拍检测模型：下载的第三方模型许可。
