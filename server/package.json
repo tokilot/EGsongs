@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "node --watch src/index.ts",
+    "dev": "node --watch-path=src --watch-path=../contracts src/dev.ts",
     "start": "node src/index.ts",
     "typecheck": "tsc --noEmit"
   },
