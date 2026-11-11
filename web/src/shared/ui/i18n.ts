@@ -328,12 +328,9 @@ export const EN: Record<string, string> = {
   返回: 'Back',
   删除播放集: 'Delete playlist',
   播放全部: 'Play all',
-  '播放集是空的，从下面添加收藏的曲谱。': 'This playlist is empty: add favourite tabs below.',
+  '播放集是空的，请添加曲谱。': 'This playlist is empty: add some tabs.',
   拖动调整顺序: 'Drag to reorder',
   从播放集移除: 'Remove from the playlist',
-  '添加收藏的曲谱…': 'Add a favourite tab…',
-  收藏的曲谱都已加入: 'Every favourite tab is in it',
-  '取消收藏后，它也会从 {n} 个播放集里移除。确认吗？': 'Taking it out of the favourites also removes it from {n} playlist(s). Go ahead?',
   // Tone page: sample sets and effect tones
   音色编辑: 'Tones',
   采样音色库: 'Sample sets',

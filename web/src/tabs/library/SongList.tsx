@@ -6,7 +6,6 @@ import { sortByName } from '../../shared/alphabetical.ts'
 import { translate, useLanguage } from '../../shared/ui/i18n.ts'
 import { useSong } from './useSong.ts'
 import { PlaylistPanel } from './PlaylistPanel.tsx'
-import { confirmUnfavorite } from './playlistQueue.ts'
 import styles from './SongList.module.css'
 
 interface SongListProps {
@@ -45,7 +44,6 @@ export function SongList({ onPick }: SongListProps) {
   }, [view, favoritesOnly, libraryVersion])
 
   const toggleFavorite = async (song: Song) => {
-    if (song.favorite && !(await confirmUnfavorite(song.id))) return
     const updated = await api.updateSong(song.id, { favorite: !song.favorite })
     if (current?.id === updated.id) replace(updated)
     libraryChanged()

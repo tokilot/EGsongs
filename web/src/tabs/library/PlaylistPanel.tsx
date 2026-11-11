@@ -9,25 +9,25 @@ import list from './SongList.module.css'
 import styles from './PlaylistPanel.module.css'
 
 /**
- * "播放列表" in "my tabs" (2026-11-05): playlists of favourite songs. A playlist's songs are dragged into the order
+ * "播放列表" in "my tabs" (2026-11-05): playlists of songs of the library (favourite or not). A playlist's songs are dragged into the order
  * they play in; opening one of them (or "play all") plays through the playlist, one song after the other.
  */
 export function PlaylistPanel({ onPick }: { onPick?: () => void }) {
   const { t } = useLanguage()
   const { libraryVersion } = useSong()
   const [playlists, setPlaylists] = useState<Playlist[] | null>(null)
-  const [favorites, setFavorites] = useState<Song[]>([])
+  const [library, setLibrary] = useState<Song[]>([])
   const [openId, setOpenId] = useState<number | null>(null)
   const [name, setName] = useState('')
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
-    Promise.all([api.listPlaylists(), api.listSongs({ favorite: true })])
+    Promise.all([api.listPlaylists(), api.listSongs()])
       .then(([lists, songs]) => {
         if (cancelled) return
         setPlaylists(lists)
-        setFavorites(songs)
+        setLibrary(songs)
         setError(null)
       })
       .catch((cause) => {
@@ -54,7 +54,7 @@ export function PlaylistPanel({ onPick }: { onPick?: () => void }) {
     return (
       <PlaylistSongs
         playlist={opened}
-        favorites={favorites}
+        library={library}
         onBack={() => setOpenId(null)}
         onChange={replace}
         onDelete={() => {
@@ -93,15 +93,15 @@ export function PlaylistPanel({ onPick }: { onPick?: () => void }) {
 
 interface PlaylistSongsProps {
   playlist: Playlist
-  favorites: Song[]
+  library: Song[]
   onBack: () => void
   onChange: (playlist: Playlist) => void
   onDelete: () => void
   onPick?: () => void
 }
 
-/** One playlist: its songs in order (dragged to reorder), adding favourites, playing it through. */
-function PlaylistSongs({ playlist, favorites, onBack, onChange, onDelete, onPick }: PlaylistSongsProps) {
+/** One playlist: its songs in order (dragged to reorder), adding songs of the library, playing it through. */
+function PlaylistSongs({ playlist, library, onBack, onChange, onDelete, onPick }: PlaylistSongsProps) {
   const { t } = useLanguage()
   const { song: current, open } = useSong()
   const queue = usePlaylistQueue()
@@ -111,9 +111,9 @@ function PlaylistSongs({ playlist, favorites, onBack, onChange, onDelete, onPick
   const [dragged, setDragged] = useState<number | null>(null)
   const [renaming, setRenaming] = useState<string | null>(null)
 
-  const byId = new Map(favorites.map((song) => [song.id, song]))
+  const byId = new Map(library.map((song) => [song.id, song]))
   const songs = order.map((id) => byId.get(id)).filter((song): song is Song => song !== undefined)
-  const addable = favorites.filter((song) => !order.includes(song.id))
+  const addable = library.filter((song) => !order.includes(song.id))
 
   const save = async (songIds: number[]) => {
     setDraft(songIds)
@@ -187,7 +187,7 @@ function PlaylistSongs({ playlist, favorites, onBack, onChange, onDelete, onPick
         {t('播放全部')}
       </button>
 
-      {songs.length === 0 && <p className={list.message}>{t('播放集是空的，从下面添加收藏的曲谱。')}</p>}
+      {songs.length === 0 && <p className={list.message}>{t('播放集是空的，请添加曲谱。')}</p>}
       <ul aria-label={playlist.name}>
         {songs.map((song, index) => {
           const playing = queue?.playlistId === playlist.id && current?.id === song.id
@@ -242,14 +242,13 @@ function PlaylistSongs({ playlist, favorites, onBack, onChange, onDelete, onPick
       <select
         className={styles.add}
         value=""
-        aria-label={t('添加收藏的曲谱…')}
         disabled={addable.length === 0}
         onChange={(event) => {
           const id = Number(event.target.value)
           if (id) void save([...order, id])
         }}
       >
-        <option value="">{addable.length === 0 ? t('收藏的曲谱都已加入') : t('添加收藏的曲谱…')}</option>
+        <option value="" />
         {addable.map((song) => (
           <option key={song.id} value={song.id}>
             {song.title}

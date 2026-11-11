@@ -6,7 +6,6 @@ import { SearchPanel } from '../tabs/library/SearchPanel.tsx'
 import { SongList } from '../tabs/library/SongList.tsx'
 import { useSong } from '../tabs/library/useSong.ts'
 import { SAVE_EDITS_EVENT, useTabEditing } from '../tabs/library/useTabEditing.ts'
-import { confirmUnfavorite } from '../tabs/library/playlistQueue.ts'
 import { STEMS_HASH, TONES_HASH, useView } from '../shared/useView.ts'
 import { usePlayer } from '../tabs/player/usePlayer.ts'
 import { useLanguage } from '../shared/ui/i18n.ts'
@@ -62,7 +61,6 @@ export function TopBar() {
 
   const toggleFavorite = async () => {
     if (!song) return
-    if (song.favorite && !(await confirmUnfavorite(song.id))) return
     replace(await api.updateSong(song.id, { favorite: !song.favorite }))
     libraryChanged()
   }

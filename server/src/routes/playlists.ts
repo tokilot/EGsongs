@@ -3,7 +3,7 @@ import type { Playlists } from '../db/playlists.ts'
 
 const notFound = { error: 'Playlist not found.' }
 
-/** Playlists of favourite songs (see db/playlists.ts). */
+/** Playlists of songs of the library (see db/playlists.ts). */
 export function playlistRoutes(app: Hono, playlists: Playlists) {
   const idOf = (param: string) => {
     const id = Number(param)
